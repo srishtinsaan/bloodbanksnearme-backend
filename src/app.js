@@ -20,7 +20,9 @@ app.use(express.urlencoded({
 
 
 
-
+app.get("/", (req, res) => {
+  res.send("Backend is running!");
+});
 
 app.use("/api", userRouter)
 
