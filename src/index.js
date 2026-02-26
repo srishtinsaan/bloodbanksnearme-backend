@@ -22,4 +22,6 @@ async function initDB() {
 // Initialize DB once (serverless cold start)
 initDB();
 
+
+
 export default app;

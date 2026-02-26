@@ -2,21 +2,30 @@ import express from "express"
 import cors from "cors"
 import userRouter from "./routes/user.routes.js"
 import { ApiError } from "./utils/ApiError.js"
+import cookieParser from "cookie-parser"
 
+// import { verifyJWT } from "../middlewares/auth.middleware.js";
+// import { authorizeRoles } from "../middlewares/authorizeRoles.js";
 
 
 
 const app = express()
 
+const PORT = process.env.PORT || 8000;
+
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
+
 app.use(cors({ 
-    origin:process.env.CORS_ORIGIN
+    origin:process.env.CORS_ORIGIN,
+    credentials: true
 }))
 
-app.use(express.json())
+app.use(express.json({ limit: "16kb" }))
+app.use(express.urlencoded({ extended: true, limit: "16kb" })) //Prevents large payload attacks
 
-app.use(express.urlencoded({ 
-    extended: true 
-}))
+app.use(cookieParser())
 
 
 
@@ -50,5 +59,9 @@ app.use((err, req, res, next) => {
     stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
   });
 });
+
+
+
+
 
 export {app}
