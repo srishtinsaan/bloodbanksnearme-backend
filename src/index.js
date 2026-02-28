@@ -1,27 +1,40 @@
-import connectDB from "./db/index.js";
 import dotenv from "dotenv";
-import { app } from "./app.js";
-
 dotenv.config({ path: "../.env" });
 
-// Keep track of DB connection to avoid reconnecting on every request
-let isConnected = false;
+import { app } from "./app.js";
 
-async function initDB() {
-  if (!isConnected) {
-    try {
+// DATABASE
+import connectDB from "./db/index.js";
+
+// REDIS
+import { connectRedis } from "./config/redis.js";
+
+// Keep track of connections (important for serverless)
+let isMongoConnected = false;
+let isRedisConnected = false;
+
+async function initConnections() {
+  try {
+    // MongoDB
+    if (!isMongoConnected) {
       await connectDB();
-      isConnected = true;
+      isMongoConnected = true;
       console.log("MongoDB connected ✅");
-    } catch (error) {
-      console.error("MONGODB Connection FAILED !!!", error);
     }
+
+    // Redis
+    if (!isRedisConnected) {
+      await connectRedis();
+      isRedisConnected = true;
+      console.log("Redis initialized ✅");
+    }
+
+  } catch (error) {
+    console.error("Connection FAILED ❌", error);
   }
 }
 
-// Initialize DB once (serverless cold start)
-initDB();
-
-
+// Initialize once (cold start safe)
+initConnections();
 
 export default app;
