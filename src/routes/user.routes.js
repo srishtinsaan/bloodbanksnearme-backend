@@ -3,8 +3,6 @@ import { fetchBloodBanksByPinCode } from "../controllers/user.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 import { loginUser, registerUser, logoutUser, refreshAccessToken } from "../controllers/auth.controller.js";
 
-
-
 const router = Router();
 
 router.route("/bloodbanks").post(fetchBloodBanksByPinCode)
