@@ -7,14 +7,14 @@ const router = Router();
 
 router.route("/bloodbanks").post(fetchBloodBanksByPinCode)
 
-router.post("/register", registerUser)
+router.post("/auth/register", registerUser)
 
-router.post("/login", loginUser)
+router.post("/auth/login", loginUser)
 
 // secured routes : those routes that are given to user only when she's logged in
 
-router.route("/logout").post(verifyJWT, logoutUser)
+router.route("/auth/logout").post(verifyJWT, logoutUser)
 
-router.route("/refresh-token").post(refreshAccessToken)
+router.route("/auth/refresh-token").post(refreshAccessToken)
 
 export default router
