@@ -34,4 +34,6 @@ const bloodbanksSchema = new Schema({
 
 }, {timestamps : true})
 
+bloodbanksSchema.index({ pincode: 1 });
+
 export const BloodBanks = mongoose.model("BloodBanks", bloodbanksSchema)

@@ -26,7 +26,8 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Pincode must be a number");
   }
 
-  const banks = await BloodBanks.find(
+  const banks = await BloodBanks
+  .find(
     {
       Pincode: Number(pincode),
     },
@@ -60,7 +61,8 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
       " Date License Obtained": 1,
       " Date of Renewal": 1,
     },
-  );
+  ).lean()
+  // .explain("executionStats");
 
   // 332001 ... many blood banks at this pin code
 
