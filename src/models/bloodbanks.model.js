@@ -31,7 +31,7 @@ const bloodbanksSchema = new Schema({
 
     latitude: { type: Number },
     longitude: { type: Number },
-    isApproved: { type: Boolean, default: false }
+    isApproved: { type: Boolean, default: true }
 
 }, {timestamps : true})
 
