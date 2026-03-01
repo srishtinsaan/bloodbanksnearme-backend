@@ -85,8 +85,6 @@ router.get("/admin/bloodbanks", verifyJWT, async (req, res) => {
   }, "Blood banks fetched"))
 })
 
-
-
 router.patch("/admin/bloodbanks/:id/verify", verifyJWT, async (req, res) => {
   const { isApproved, source } = req.body
 
@@ -107,6 +105,36 @@ router.patch("/admin/bloodbanks/:id/verify", verifyJWT, async (req, res) => {
     { new: true }
   )
   res.json(new ApiResponse(200, bank, "Verification updated"))
+})
+
+// GET /api/admin/users?role=donor&page=1&limit=10
+router.get("/admin/users", verifyJWT, async (req, res) => {
+  const { role } = req.query
+  const page = parseInt(req.query.page) || 1
+  const limit = parseInt(req.query.limit) || 10
+  const skip = (page - 1) * limit
+
+  const total = await User.countDocuments({ role })
+  const users = await User.find({ role })
+    .select("-password -refreshToken")
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean()
+
+  res.json(new ApiResponse(200, { users, total }, "Users fetched"))
+})
+
+// PATCH /api/admin/users/:id/verify
+router.patch("/admin/users/:id/verify", verifyJWT, async (req, res) => {
+  const { isApproved } = req.body
+  const updatedUser = await User.findByIdAndUpdate(
+    req.params.id,
+    { isApproved },
+    { new: true }
+  ).select("-password -refreshToken")
+
+  res.json(new ApiResponse(200, updatedUser, "User verification updated"))
 })
 
 
