@@ -55,7 +55,8 @@ router.get("/admin/bloodbanks", verifyJWT, async (req, res) => {
       " Latitude": 1,
       " Longitude": 1,
       "Pincode": 1,
-      _id: 1
+      _id: 1,
+      isApproved: 1,
     }
   )
   .skip(skip)
