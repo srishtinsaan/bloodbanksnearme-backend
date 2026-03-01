@@ -3,7 +3,10 @@ import { fetchBloodBanksByPinCode } from "../controllers/user.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 import { loginUser, registerUser, logoutUser, refreshAccessToken } from "../controllers/auth.controller.js";
 import { BloodBanks } from "../models/bloodbanks.model.js"; 
+import { User } from "../models/user.model.js"; 
+
 import { ApiResponse } from "../utils/ApiResponse.js";
+
 
 const router = Router();
 
@@ -24,59 +27,83 @@ router.get("/admin/bloodbanks", verifyJWT, async (req, res) => {
   const limit = parseInt(req.query.limit) || 10
   const skip = (page - 1) * limit
 
+  // Fetch unverified registered banks from User model (always show first)
+  const unverifiedUsers = await User.find(
+    { role: "bloodbank", isApproved: false },
+    {
+      username: 1,
+      email: 1,
+      phone: 1,
+      pincode: 1,
+      licenseNumber: 1,
+      isApproved: 1,
+      _id: 1,
+    }
+  ).lean()
+
+  // Transform user model fields to match CSV style
+  const transformedUsers = unverifiedUsers.map(u => ({
+    _id: u._id,
+    " Blood Bank Name": u.username,
+    " Email": u.email,
+    " Mobile": u.phone,
+    " License #": u.licenseNumber,
+    "Pincode": u.pincode,
+    isApproved: false,
+    source: "user" // ✅ to identify which model it came from
+  }))
+
+  // Fetch from BloodBanks model with pagination
   const total = await BloodBanks.countDocuments()
   const verifiedCount = await BloodBanks.countDocuments({ isApproved: true })
-  
+
   const bloodBanks = await BloodBanks.find(
     {},
     {
       " Blood Bank Name": 1,
-      " Address": 1,
-      " State": 1,
-      " District": 1,
-      " City": 1,
-      " Contact No": 1,
-      " Mobile": 1,
-      " Category": 1,
-      " Government": 1,
-      " Blood Component Available": 1,
-      " Apheresis": 1,
-      " Service Time": 1,
-      " Helpline": 1,
       " Email": 1,
-      " Website": 1,
-      " Nodal Officer": 1,
-      " Contact Nodal Officer": 1,
-      " Mobile Nodal Officer": 1,
-      " Email Nodal Officer": 1,
-      " Qualification Nodal Officer": 1,
+      " Mobile": 1,
       " License #": 1,
-      " Date License Obtained": 1,
-      " Date of Renewal": 1,
-      " Latitude": 1,
-      " Longitude": 1,
       "Pincode": 1,
-      _id: 1,
       isApproved: 1,
+      _id: 1,
     }
   )
   .skip(skip)
   .limit(limit)
   .lean()
 
-  res.json(new ApiResponse(200, { bloodBanks, total, verifiedCount }, "Blood banks fetched"))
+  // Combine: unverified users first, then paginated bloodbanks
+  const combined = [...transformedUsers, ...bloodBanks]
+
+  res.json(new ApiResponse(200, {
+    bloodBanks: combined,
+    total: total + unverifiedUsers.length,
+    verifiedCount
+  }, "Blood banks fetched"))
 })
 
 
 
 router.patch("/admin/bloodbanks/:id/verify", verifyJWT, async (req, res) => {
-  const { isApproved } = req.body
+  const { isApproved, source } = req.body
+
+  if (source === "user") {
+    // Update in User model
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { isApproved },
+      { new: true }
+    )
+    return res.json(new ApiResponse(200, user, "User bank verification updated"))
+  }
+
+  // Update in BloodBanks model
   const bank = await BloodBanks.findByIdAndUpdate(
     req.params.id,
     { isApproved },
     { new: true }
-  ) // ✅ removed .select()
-
+  )
   res.json(new ApiResponse(200, bank, "Verification updated"))
 })
 
