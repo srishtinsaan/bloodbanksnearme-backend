@@ -88,15 +88,24 @@ const registerUser = asyncHandler(async (req, res) => {
 });
 
 const loginUser = asyncHandler(async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, licenseNumber } = req.body;
 
-  if (!username || !password) {
-    throw new ApiError(400, "Username and password required");
-  }
 
-  const user = await User.findOne({ username });
+  if (!password) {
+  throw new ApiError(400, "Password is required");
+}
 
-  if (!user) {
+let user;
+
+if (licenseNumber) {
+  user = await User.findOne({ licenseNumber, role: "bloodbank" });
+} else if (username) {
+  user = await User.findOne({ username });
+} else {
+  throw new ApiError(400, "Username or License number required");
+}
+  
+if (!user) {
     throw new ApiError(404, "User not found");
   }
 
@@ -119,6 +128,7 @@ const loginUser = asyncHandler(async (req, res) => {
     secure: true,
     sameSite: "lax",
   };
+
 
   return res
     .status(200)
