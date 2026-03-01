@@ -48,7 +48,7 @@ const userSchema = new Schema(
     licenseNumber: {
       type: String,
       required: function () {
-        return this.role === "blood_bank";
+        return this.role === "bloodbank";
       }
     },
 
@@ -56,7 +56,7 @@ const userSchema = new Schema(
     isApproved: {
       type: Boolean,
       default: function () {
-        return this.role === "blood_bank" ? false : true;
+        return this.role === "bloodbank" ? false : true;
       }
     },
 
@@ -66,6 +66,16 @@ const userSchema = new Schema(
   },
   { timestamps: true }
 );
+
+
+userSchema.pre("save", async function(next){
+    if(this.isModified("password")){
+        this.password = await bcrypt.hash(this.password, 10)
+        next()
+    }else{
+        return next()
+    }
+})
 
 userSchema.methods.isPasswordCorrect = async function(password){
     return await bcrypt.compare(password, this.password)
