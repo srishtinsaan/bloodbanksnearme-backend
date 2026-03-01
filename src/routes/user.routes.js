@@ -39,7 +39,9 @@ router.get("/admin/bloodbanks", verifyJWT, async (req, res) => {
       isApproved: 1,
       _id: 1,
     }
-  ).lean()
+  )
+  .sort({ updatedAt: -1 })
+  .lean()
 
   // Transform user model fields to match CSV style
   const transformedUsers = unverifiedUsers.map(u => ({
@@ -50,7 +52,7 @@ router.get("/admin/bloodbanks", verifyJWT, async (req, res) => {
     " License #": u.licenseNumber,
     "Pincode": u.pincode,
     isApproved: false,
-    source: "user" // ✅ to identify which model it came from
+    source: "user" // to identify which model it came from
   }))
 
   // Fetch from BloodBanks model with pagination
@@ -69,6 +71,7 @@ router.get("/admin/bloodbanks", verifyJWT, async (req, res) => {
       _id: 1,
     }
   )
+  .sort({ updatedAt: -1 })
   .skip(skip)
   .limit(limit)
   .lean()
@@ -106,5 +109,7 @@ router.patch("/admin/bloodbanks/:id/verify", verifyJWT, async (req, res) => {
   )
   res.json(new ApiResponse(200, bank, "Verification updated"))
 })
+
+
 
 export default router
