@@ -24,24 +24,56 @@ router.get("/admin/bloodbanks", verifyJWT, async (req, res) => {
   const limit = parseInt(req.query.limit) || 10
   const skip = (page - 1) * limit
 
-  const total = await BloodBanks.countDocuments({ role: "bloodbank" })
-  const bloodBanks = await BloodBanks.find({ role: "bloodbank" })
-    .select("-password -refreshToken")
-    .skip(skip)
-    .limit(limit)
+  const total = await BloodBanks.countDocuments()
+  
+  const bloodBanks = await BloodBanks.find(
+    {},
+    {
+      " Blood Bank Name": 1,
+      " Address": 1,
+      " State": 1,
+      " District": 1,
+      " City": 1,
+      " Contact No": 1,
+      " Mobile": 1,
+      " Category": 1,
+      " Government": 1,
+      " Blood Component Available": 1,
+      " Apheresis": 1,
+      " Service Time": 1,
+      " Helpline": 1,
+      " Email": 1,
+      " Website": 1,
+      " Nodal Officer": 1,
+      " Contact Nodal Officer": 1,
+      " Mobile Nodal Officer": 1,
+      " Email Nodal Officer": 1,
+      " Qualification Nodal Officer": 1,
+      " License #": 1,
+      " Date License Obtained": 1,
+      " Date of Renewal": 1,
+      " Latitude": 1,
+      " Longitude": 1,
+      " Pincode": 1,
+      _id: 1
+    }
+  )
+  .skip(skip)
+  .limit(limit)
+  .lean()
 
   res.json(new ApiResponse(200, { bloodBanks, total }, "Blood banks fetched"))
 })
 
 router.patch("/admin/bloodbanks/:id/verify", verifyJWT, async (req, res) => {
   const { isApproved } = req.body
-  const user = await BloodBanks.findByIdAndUpdate(
+  const bank = await BloodBanks.findByIdAndUpdate(
     req.params.id,
     { isApproved },
     { new: true }
-  ).select("-password -refreshToken")
+  ) // ✅ removed .select()
 
-  res.json(new ApiResponse(200, user, "Verification updated"))
+  res.json(new ApiResponse(200, bank, "Verification updated"))
 })
 
 export default router
