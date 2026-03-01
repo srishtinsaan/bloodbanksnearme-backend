@@ -139,11 +139,20 @@ router.patch("/admin/users/:id/verify", verifyJWT, async (req, res) => {
 
 // GET /api/admin/stats
 router.get("/admin/stats", verifyJWT, async (req, res) => {
-  const bloodBanks = await User.countDocuments({ role: "bloodbank" })
+  const registeredBloodBanks = await User.countDocuments({ role: "bloodbank" })
+  const dbBloodBanks = await BloodBanks.countDocuments()
   const donors = await User.countDocuments({ role: "donor" })
   const recipients = await User.countDocuments({ role: "recipient" })
 
-  res.json(new ApiResponse(200, { bloodBanks, donors, recipients }, "Stats fetched"))
+  const totalBloodBanks = registeredBloodBanks + dbBloodBanks // ✅ combined
+
+  res.json(new ApiResponse(200, { 
+    bloodBanks: totalBloodBanks,
+    registeredBloodBanks, // bonus: breakdown
+    dbBloodBanks,         // bonus: breakdown
+    donors, 
+    recipients 
+  }, "Stats fetched"))
 })
 
 
