@@ -65,6 +65,11 @@ router.get("/admin/bloodbanks", verifyJWT, async (req, res) => {
   res.json(new ApiResponse(200, { bloodBanks, total }, "Blood banks fetched"))
 })
 
+router.patch("/admin/bloodbanks/verify-all", verifyJWT, async (req, res) => {
+  await BloodBanks.updateMany({}, { isApproved: true })
+  res.json(new ApiResponse(200, {}, "All blood banks verified"))
+})
+
 router.patch("/admin/bloodbanks/:id/verify", verifyJWT, async (req, res) => {
   const { isApproved } = req.body
   const bank = await BloodBanks.findByIdAndUpdate(
