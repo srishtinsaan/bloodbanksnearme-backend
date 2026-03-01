@@ -71,7 +71,6 @@ router.get("/admin/bloodbanks", verifyJWT, async (req, res) => {
       _id: 1,
     }
   )
-  .sort({ updatedAt: -1 })
   .skip(skip)
   .limit(limit)
   .lean()
