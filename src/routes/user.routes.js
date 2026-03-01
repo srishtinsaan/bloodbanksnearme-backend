@@ -54,7 +54,7 @@ router.get("/admin/bloodbanks", verifyJWT, async (req, res) => {
       " Date of Renewal": 1,
       " Latitude": 1,
       " Longitude": 1,
-      " Pincode": 1,
+      "Pincode": 1,
       _id: 1
     }
   )
