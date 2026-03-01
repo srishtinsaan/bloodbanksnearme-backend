@@ -137,6 +137,15 @@ router.patch("/admin/users/:id/verify", verifyJWT, async (req, res) => {
   res.json(new ApiResponse(200, updatedUser, "User verification updated"))
 })
 
+// GET /api/admin/stats
+router.get("/admin/stats", verifyJWT, async (req, res) => {
+  const bloodBanks = await User.countDocuments({ role: "bloodbank" })
+  const donors = await User.countDocuments({ role: "donor" })
+  const recipients = await User.countDocuments({ role: "recipient" })
+
+  res.json(new ApiResponse(200, { bloodBanks, donors, recipients }, "Stats fetched"))
+})
+
 
 
 export default router
