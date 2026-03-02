@@ -25,6 +25,8 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   const redis = await connectRedis();
   const cacheKey = `bloodbanks:${pincode}`;
 
+  await redis.del(cacheKey)
+
   //  Check Cache
   const cachedData = await redis.get(cacheKey);
 
@@ -70,8 +72,7 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
       " License #": 1,
       " Date License Obtained": 1,
       " Date of Renewal": 1,
-      "Latitude" : 1,
-      "Longitude" : 1
+      
     }
   ).lean();
 
