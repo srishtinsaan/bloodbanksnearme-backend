@@ -19,7 +19,8 @@ app.listen(PORT, () => {
 
 const allowedOrigins = [
   process.env.LOCAL_DEV, // local dev
-  process.env.DEPLOYED_ORIGIN // deployed frontend
+  process.env.DEPLOYED_ORIGIN_ONE,
+  process.env.DEPLOYED_ORIGIN_TWO // deployed frontend
 ];
 
 
