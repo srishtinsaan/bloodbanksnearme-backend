@@ -4,6 +4,11 @@ import { verifyJWT } from "../middlewares/auth.middleware.js";
 import { loginUser, registerUser, logoutUser, refreshAccessToken } from "../controllers/auth.controller.js";
 import { BloodBanks } from "../models/bloodbanks.model.js"; 
 import { User } from "../models/user.model.js"; 
+import {registerDonor} from "../controllers/donor.controller.js"
+import {Donor} from "../models/donor.model.js"
+import { authorizeRoles } from "../middlewares/authorizeRoles.js";
+import { authorizeMode } from "../middlewares/authorizeMode.js";
+import { ApiError } from "../utils/ApiError.js";
 
 import { ApiResponse } from "../utils/ApiResponse.js";
 
@@ -113,9 +118,11 @@ router.get("/admin/users", verifyJWT, async (req, res) => {
   const page = parseInt(req.query.page) || 1
   const limit = parseInt(req.query.limit) || 10
   const skip = (page - 1) * limit
-
-  const total = await User.countDocuments({ role })
-  const users = await User.find({ role })
+  const filter = ["donor", "recipient"].includes(role)
+      ? { role: "user", mode: role }
+      : { role };
+  const total = await User.countDocuments(filter)
+  const users = await User.find(filter)
     .select("-password -refreshToken")
     .sort({ createdAt: -1 })
     .skip(skip)
@@ -139,21 +146,56 @@ router.patch("/admin/users/:id/verify", verifyJWT, async (req, res) => {
 
 // GET /api/admin/stats
 router.get("/admin/stats", verifyJWT, async (req, res) => {
-  const registeredBloodBanks = await User.countDocuments({ role: "bloodbank" })
-  const dbBloodBanks = await BloodBanks.countDocuments()
-  const donors = await User.countDocuments({ role: "donor" })
-  const recipients = await User.countDocuments({ role: "recipient" })
+  const users = await User.countDocuments({
+    role: "user",
+  })
 
-  const totalBloodBanks = registeredBloodBanks + dbBloodBanks // ✅ combined
+  const registeredBloodBanks =
+    await User.countDocuments({
+      role: "bloodbank",
+    })
 
-  res.json(new ApiResponse(200, { 
-    bloodBanks: totalBloodBanks,
-    registeredBloodBanks, // bonus: breakdown
-    dbBloodBanks,         // bonus: breakdown
-    donors, 
-    recipients 
-  }, "Stats fetched"))
+  const dbBloodBanks =
+    await BloodBanks.countDocuments()
+
+  const totalBloodBanks =
+    registeredBloodBanks + dbBloodBanks
+
+  res.json(
+    new ApiResponse(
+      200,
+      {
+        users,
+        bloodBanks: totalBloodBanks,
+        registeredBloodBanks,
+        dbBloodBanks,
+      },
+      "Stats fetched"
+    )
+  )
 })
+
+router.route("/dashboard/donor/register").post(verifyJWT, authorizeMode("donor"), registerDonor);
+
+router.patch("/auth/set-mode", verifyJWT, async (req, res) => {
+  const { mode } = req.body;
+
+  if (!["donor", "recipient"].includes(mode)) {
+    throw new ApiError(400, "Invalid mode. Must be donor or recipient");
+  }
+
+  if (req.user.role !== "user") {
+    throw new ApiError(403, "Only users can set mode");
+  }
+
+  const updatedUser = await User.findByIdAndUpdate(
+    req.user._id,
+    { mode },
+    { new: true }
+  ).select("-password -refreshToken");
+
+  return res.json(new ApiResponse(200, { user: updatedUser, mode }, "Mode set successfully"));
+});
 
 
 

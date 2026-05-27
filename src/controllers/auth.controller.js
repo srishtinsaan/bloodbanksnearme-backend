@@ -43,7 +43,7 @@ const registerUser = asyncHandler(async (req, res) => {
   }
 
   // Validate role
-  const allowedRoles = ["admin", "bloodbank", "donor", "recipient"];
+  const allowedRoles = ["admin", "bloodbank", "user"];
 
   if (!allowedRoles.includes(role)) {
     throw new ApiError(400, "Invalid role selected");
@@ -69,7 +69,6 @@ const registerUser = asyncHandler(async (req, res) => {
     role,
     phone,
     pincode,
-    bloodGroup: role === "donor" ? bloodGroup : undefined,
     licenseNumber: role === "bloodbank" ? licenseNumber : undefined
   });
 
@@ -141,7 +140,8 @@ if (!user) {
           user: loggedInUser,
           accessToken,
           refreshToken,
-          role: user.role, // ✅ frontend will redirect based on this
+          role: user.role,
+          mode : user.mode
         },
         "Login successful",
       ),

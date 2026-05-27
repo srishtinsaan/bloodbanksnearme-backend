@@ -25,9 +25,14 @@ const userSchema = new Schema(
 
     role: {
       type: String,
-      enum: ["admin", "bloodbank", "donor", "recipient"],
+      enum: ["admin", "bloodbank", "user"],
       required: true
     },
+    mode: {
+  type: String,
+  enum: ["donor", "recipient", null],
+  default: null
+},
 
     phone: {
       type: String,
