@@ -3,6 +3,7 @@ import cors from "cors"
 import userRouter from "./routes/user.routes.js"
 import { ApiError } from "./utils/ApiError.js"
 import cookieParser from "cookie-parser"
+import "./jobs/cleanupRequests.js";
 
 // import { verifyJWT } from "../middlewares/auth.middleware.js";
 // import { authorizeRoles } from "../middlewares/authorizeRoles.js";

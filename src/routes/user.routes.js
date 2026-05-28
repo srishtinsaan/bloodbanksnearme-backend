@@ -9,6 +9,21 @@ import {Donor} from "../models/donor.model.js"
 import { authorizeRoles } from "../middlewares/authorizeRoles.js";
 import { authorizeMode } from "../middlewares/authorizeMode.js";
 import { ApiError } from "../utils/ApiError.js";
+import {
+  createBloodRequest,
+  getMyBloodRequests,
+  getAllBloodRequests,
+  updateBloodRequestStatus,
+  requestCancellation,
+  getBankBloodRequests
+} from "../controllers/bloodRequest.controller.js";
+import {
+  createDonationRequest,
+  getMyDonationRequests,
+  getAllDonationRequests,
+  updateDonationRequestStatus,
+  requestDonationCancellation
+} from "../controllers/donationRequest.controller.js";
 
 import { ApiResponse } from "../utils/ApiResponse.js";
 
@@ -197,6 +212,25 @@ router.patch("/auth/set-mode", verifyJWT, async (req, res) => {
   return res.json(new ApiResponse(200, { user: updatedUser, mode }, "Mode set successfully"));
 });
 
+// User routes
+router.post("/blood-requests", verifyJWT, createBloodRequest);
+router.get("/blood-requests/my", verifyJWT, getMyBloodRequests);
+router.patch("/blood-requests/:id/cancel", verifyJWT, requestCancellation);
 
+// Admin routes
+router.get("/blood-requests", verifyJWT, authorizeRoles("admin"), getAllBloodRequests);
+router.patch("/blood-requests/:id/status", verifyJWT, authorizeRoles("admin"), updateBloodRequestStatus);
+
+// blood bank
+router.get("/blood-requests/bank", verifyJWT, authorizeRoles("bloodbank"), getBankBloodRequests)
+
+// Donor routes
+router.post("/donation-requests", verifyJWT, authorizeMode("donor"), createDonationRequest);
+router.get("/donation-requests/my", verifyJWT, authorizeMode("donor"), getMyDonationRequests);
+router.patch("/donation-requests/:id/cancel", verifyJWT, requestDonationCancellation);
+
+// Admin donation routes
+router.get("/donation-requests", verifyJWT, authorizeRoles("admin"), getAllDonationRequests);
+router.patch("/donation-requests/:id/status", verifyJWT, authorizeRoles("admin"), updateDonationRequestStatus);
 
 export default router

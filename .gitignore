@@ -14,7 +14,7 @@ frontend/.next
 
 # Env files
 .env
-
+src/seedBloodBankUsers.js
 
 # OS / IDE files
 .DS_Store
