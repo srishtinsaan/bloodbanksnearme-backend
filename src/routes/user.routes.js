@@ -30,7 +30,7 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 
 const router = Router();
 
-router.route("/bloodbanks").post(fetchBloodBanksByPinCode)
+router.route("/bloodbanks").get(fetchBloodBanksByPinCode)
 
 router.post("/auth/register", registerUser)
 
