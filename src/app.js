@@ -51,7 +51,9 @@ app.get("/", (req, res) => {
 app.use("/api", userRouter)
 
 
-
+app.get("/api/debug", (req, res) => {
+  res.send("debug works");
+});
 
 
 // error handling:-
