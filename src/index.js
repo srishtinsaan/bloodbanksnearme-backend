@@ -6,12 +6,9 @@ import { app } from "./app.js";
 // DATABASE
 import connectDB from "./db/index.js";
 
-// REDIS
-import { connectRedis } from "./config/redis.js";
 
 // Keep track of connections (important for serverless)
 let isMongoConnected = false;
-let isRedisConnected = false;
 
 async function initConnections() {
   try {
@@ -22,12 +19,7 @@ async function initConnections() {
       console.log("MongoDB connected ✅");
     }
 
-    // Redis
-    if (!isRedisConnected) {
-      await connectRedis();
-      isRedisConnected = true;
-      console.log("Redis initialized ✅");
-    }
+    
 
   } catch (error) {
     console.error("Connection FAILED ❌", error);

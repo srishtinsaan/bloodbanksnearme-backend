@@ -2,7 +2,6 @@ import { asyncHandler } from "../../src/utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { BloodBanks } from "../models/bloodbanks.model.js";
-import { connectRedis } from "../config/redis.js";
 
 
 const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
@@ -22,25 +21,8 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Pincode must be exactly 6 digits");
   }
 
-  const redis = await connectRedis();
-  const cacheKey = `bloodbanks:${pincode}`;
 
-  await redis.del(cacheKey)
 
-  //  Check Cache
-  const cachedData = await redis.get(cacheKey);
-
-  if (cachedData) {
-    console.log("Serving from Redis ⚡");
-
-    return res
-      .status(200)
-      .json(new ApiResponse(
-        200,
-        JSON.parse(cachedData),
-        "Blood banks fetched successfully (cache)"
-      ));
-  }
 
   //  Fetch From MongoDB
   console.log("Serving from MongoDB 💾");
@@ -82,8 +64,7 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
     throw new ApiError(404, "No blood banks found for this pincode");
   }
 
-  // Store In Redis (10 min expiry)
-  await redis.setEx(cacheKey, 600, JSON.stringify(banks));
+ 
 
   return res
     .status(200)

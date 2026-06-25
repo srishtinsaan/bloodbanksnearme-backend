@@ -27,14 +27,16 @@ import {
 
 import { ApiResponse } from "../utils/ApiResponse.js";
 
-
+console.log("USER ROUTES FILE LOADED");
 const router = Router();
 
 router.get("/test", (req, res) => {
   res.send("working");
 });
 
-router.route("/bloodbanks").get(fetchBloodBanksByPinCode)
+router.route("/bloodbanks").post(fetchBloodBanksByPinCode)
+
+console.log("bloodbanks route registered");
 
 router.post("/auth/register", registerUser)
 
@@ -236,5 +238,15 @@ router.patch("/donation-requests/:id/cancel", verifyJWT, requestDonationCancella
 // Admin donation routes
 router.get("/donation-requests", verifyJWT, authorizeRoles("admin"), getAllDonationRequests);
 router.patch("/donation-requests/:id/status", verifyJWT, authorizeRoles("admin"), updateDonationRequestStatus);
+
+
+console.log(
+  router.stack
+    .filter(r => r.route)
+    .map(r => ({
+      path: r.route.path,
+      methods: Object.keys(r.route.methods)
+    }))
+);
 
 export default router
