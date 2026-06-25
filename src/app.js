@@ -42,7 +42,9 @@ app.use(express.urlencoded({ extended: true, limit: "16kb" })) //Prevents large 
 
 app.use(cookieParser())
 
-
+app.get("/hello123", (req, res) => {
+  res.send("HELLO123");
+});
 
 app.get("/", (req, res) => {
   res.send("Backend is running!");
