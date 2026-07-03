@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { fetchBloodBanksByPinCode } from "../controllers/user.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
-import { loginUser, registerUser, logoutUser, refreshAccessToken } from "../controllers/auth.controller.js";
+import { loginUser, registerUser, logoutUser, refreshAccessToken, verifyEmailOTP, resendOTP } from "../controllers/auth.controller.js";
 import { BloodBanks } from "../models/bloodbanks.model.js"; 
 import { User } from "../models/user.model.js"; 
 import {registerDonor} from "../controllers/donor.controller.js"
@@ -41,6 +41,12 @@ console.log("bloodbanks route registered");
 router.post("/auth/register", registerUser)
 
 router.post("/auth/login", loginUser)
+
+router.post("/auth/verify-email", verifyEmailOTP)
+
+router.post("/auth/resend-otp", resendOTP)
+
+// secured routes : those routes that are given to user only when she's logged in
 
 // secured routes : those routes that are given to user only when she's logged in
 

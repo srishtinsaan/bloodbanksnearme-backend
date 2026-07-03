@@ -3,6 +3,7 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
 import { User } from "../models/user.model.js";
+import { sendEmail } from "../utils/sendEmail.js";
 
 
 
@@ -24,6 +25,8 @@ const generateAccessAndRefreshToken = async (userId) => {
     );
   }
 };
+
+const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 const registerUser = asyncHandler(async (req, res) => {
 
@@ -72,6 +75,19 @@ const registerUser = asyncHandler(async (req, res) => {
     licenseNumber: role === "bloodbank" ? licenseNumber : undefined
   });
 
+  if (role === "user") {
+    const otp = generateOTP();
+    user.emailVerificationOTP = otp;
+    user.emailVerificationOTPExpiry = Date.now() + 10 * 60 * 1000; // 10 min
+    await user.save({ validateBeforeSave: false });
+
+    await sendEmail({
+      to: user.email,
+      subject: "BloodConnect - Verify your email",
+      html: `<p>Your verification code is <b>${otp}</b>. It expires in 10 minutes.</p>`,
+    });
+  }
+
   const createdUser = await User.findById(user._id)
     .select("-password -refreshToken");
 
@@ -81,6 +97,8 @@ const registerUser = asyncHandler(async (req, res) => {
       createdUser,
       role === "bloodbank"
         ? "Blood Bank registered. Waiting for admin approval."
+        : role === "user"
+        ? "Registration successful. OTP sent to your email."
         : "User registered successfully"
     )
   );
@@ -112,6 +130,10 @@ if (!user) {
 
   if (!isPasswordValid) {
     throw new ApiError(401, "Invalid credentials");
+  }
+
+  if (user.role === "user" && !user.isEmailVerified) {
+    throw new ApiError(403, "Please verify your email before logging in");
   }
 
   const { accessToken, refreshToken } = await generateAccessAndRefreshToken(
@@ -146,6 +168,74 @@ if (!user) {
         "Login successful",
       ),
     );
+});
+
+const verifyEmailOTP = asyncHandler(async (req, res) => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp) {
+    throw new ApiError(400, "Email and OTP are required");
+  }
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  if (user.isEmailVerified) {
+    return res.status(200).json(new ApiResponse(200, {}, "Email already verified"));
+  }
+
+  if (!user.emailVerificationOTP || !user.emailVerificationOTPExpiry) {
+    throw new ApiError(400, "No OTP requested. Please request a new one");
+  }
+
+  if (user.emailVerificationOTPExpiry < Date.now()) {
+    throw new ApiError(400, "OTP has expired. Please request a new one");
+  }
+
+  if (user.emailVerificationOTP !== otp) {
+    throw new ApiError(400, "Invalid OTP");
+  }
+
+  user.isEmailVerified = true;
+  user.emailVerificationOTP = undefined;
+  user.emailVerificationOTPExpiry = undefined;
+  await user.save({ validateBeforeSave: false });
+
+  return res.status(200).json(new ApiResponse(200, {}, "Email verified successfully"));
+});
+
+const resendOTP = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    throw new ApiError(400, "Email is required");
+  }
+
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  if (user.isEmailVerified) {
+    return res.status(200).json(new ApiResponse(200, {}, "Email already verified"));
+  }
+
+  const otp = generateOTP();
+  user.emailVerificationOTP = otp;
+  user.emailVerificationOTPExpiry = Date.now() + 10 * 60 * 1000;
+  await user.save({ validateBeforeSave: false });
+
+  await sendEmail({
+    to: user.email,
+    subject: "BloodConnect - Verify your email",
+    html: `<p>Your verification code is <b>${otp}</b>. It expires in 10 minutes.</p>`,
+  });
+
+  return res.status(200).json(new ApiResponse(200, {}, "OTP resent successfully"));
 });
 
 const logoutUser = asyncHandler( async (req , res) =>{
@@ -236,5 +326,7 @@ export {
   registerUser,
   loginUser,
   refreshAccessToken,
-  logoutUser
+  logoutUser,
+  verifyEmailOTP,
+  resendOTP
 };

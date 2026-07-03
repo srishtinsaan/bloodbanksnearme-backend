@@ -22,6 +22,18 @@ const userSchema = new Schema(
       type: String,
       required: [true, "Password is required"]
     },
+    isEmailVerified: {
+      type: Boolean,
+      default: false
+    },
+
+    emailVerificationOTP: {
+      type: String
+    },
+
+    emailVerificationOTPExpiry: {
+      type: Date
+    },
 
     role: {
       type: String,
