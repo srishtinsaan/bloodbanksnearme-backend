@@ -1,8 +1,11 @@
 import express from "express"
 import cors from "cors"
 import userRouter from "./routes/user.routes.js"
+import bloodbankRoutes from "./routes/bloodBank.routes.js";
 import { ApiError } from "./utils/ApiError.js"
 import cookieParser from "cookie-parser"
+import adminRouter from "./routes/admin.routes.js";
+
 import "./jobs/cleanupRequests.js";
 
 // import { verifyJWT } from "../middlewares/auth.middleware.js";
@@ -50,8 +53,9 @@ app.get("/", (req, res) => {
   res.send("Backend is running!");
 });
 
-app.use("/api", userRouter)
-
+app.use("/api/v1", userRouter);
+app.use("/api/v1/bloodbanks", bloodbankRoutes);
+app.use("/api/v1/admin", adminRouter);
 
 app.get("/api/debug", (req, res) => {
   res.send("debug works");

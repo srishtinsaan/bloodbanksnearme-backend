@@ -7,9 +7,11 @@ const bloodbanksSchema = new Schema({
     district: { type: String },
     city: { type: String },
     address: { type: String },
-    pincode: { type: Number },
+    pincode: { type: String },
     contactNo: { type: String },
-    mobile: { type: Number },
+    mobile: {
+    type: String,
+},
     helpline: { type: String },
     fax: { type: String },
     email: { type: String },
@@ -31,7 +33,48 @@ const bloodbanksSchema = new Schema({
 
     latitude: { type: Number },
     longitude: { type: Number },
-    isApproved: { type: Boolean, default: true }
+    isVerified: {
+    type: Boolean,
+    default: false
+},
+
+verificationStatus: {
+    type: String,
+    enum: ["pending", "verified", "rejected"],
+    default: "pending"
+},
+
+verifiedAt: {
+    type: Date,
+    default: null
+},
+
+verifiedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    default: null
+},
+
+rejectionReason: {
+    type: String,
+    default: ""
+},
+documents: {
+    licenseCertificate: String,
+    registrationCertificate: String,
+    ownerIdProof: String
+},
+
+    inventory: {
+  "A+": { type: Number, default: 0 },
+  "A-": { type: Number, default: 0 },
+  "B+": { type: Number, default: 0 },
+  "B-": { type: Number, default: 0 },
+  "O+": { type: Number, default: 0 },
+  "O-": { type: Number, default: 0 },
+  "AB+": { type: Number, default: 0 },
+  "AB-": { type: Number, default: 0 },
+}
 
 }, {timestamps : true})
 

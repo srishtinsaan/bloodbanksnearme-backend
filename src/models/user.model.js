@@ -68,6 +68,26 @@ const userSchema = new Schema(
         return this.role === "bloodbank";
       }
     },
+    latitude: {
+      type: Number,
+      default: null,
+    },
+
+    longitude: {
+      type: Number,
+      default: null,
+    },
+
+    inventory: {
+      "A+": { type: Number, default: 0 },
+      "A-": { type: Number, default: 0 },
+      "B+": { type: Number, default: 0 },
+      "B-": { type: Number, default: 0 },
+      "O+": { type: Number, default: 0 },
+      "O-": { type: Number, default: 0 },
+      "AB+": { type: Number, default: 0 },
+      "AB-": { type: Number, default: 0 },
+    },
 
     // Blood banks must be approved by admin
     isApproved: {

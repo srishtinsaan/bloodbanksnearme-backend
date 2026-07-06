@@ -13,21 +13,18 @@ import {
   createBloodRequest,
   getMyBloodRequests,
   getAllBloodRequests,
-  updateBloodRequestStatus,
   requestCancellation,
-  getBankBloodRequests
 } from "../controllers/bloodRequest.controller.js";
 import {
   createDonationRequest,
   getMyDonationRequests,
+  getDonationRequestDetails,
   getAllDonationRequests,
-  updateDonationRequestStatus,
   requestDonationCancellation
 } from "../controllers/donationRequest.controller.js";
 
 import { ApiResponse } from "../utils/ApiResponse.js";
 
-console.log("USER ROUTES FILE LOADED");
 const router = Router();
 
 router.get("/test", (req, res) => {
@@ -54,153 +51,6 @@ router.route("/auth/logout").post(verifyJWT, logoutUser)
 
 router.route("/auth/refresh-token").post(refreshAccessToken)
 
-router.get("/admin/bloodbanks", verifyJWT, async (req, res) => {
-  const page = parseInt(req.query.page) || 1
-  const limit = parseInt(req.query.limit) || 10
-  const skip = (page - 1) * limit
-
-  // Fetch unverified registered banks from User model (always show first)
-  const unverifiedUsers = await User.find(
-    { role: "bloodbank", isApproved: false },
-    {
-      username: 1,
-      email: 1,
-      phone: 1,
-      pincode: 1,
-      licenseNumber: 1,
-      isApproved: 1,
-      _id: 1,
-    }
-  )
-  .sort({ updatedAt: -1 })
-  .lean()
-
-  // Transform user model fields to match CSV style
-  const transformedUsers = unverifiedUsers.map(u => ({
-    _id: u._id,
-    " Blood Bank Name": u.username,
-    " Email": u.email,
-    " Mobile": u.phone,
-    " License #": u.licenseNumber,
-    "Pincode": u.pincode,
-    isApproved: false,
-    source: "user" // to identify which model it came from
-  }))
-
-  // Fetch from BloodBanks model with pagination
-  const total = await BloodBanks.countDocuments()
-  const verifiedCount = await BloodBanks.countDocuments({ isApproved: true })
-
-  const bloodBanks = await BloodBanks.find(
-    {},
-    {
-      " Blood Bank Name": 1,
-      " Email": 1,
-      " Mobile": 1,
-      " License #": 1,
-      "Pincode": 1,
-      isApproved: 1,
-      _id: 1,
-    }
-  )
-  .skip(skip)
-  .limit(limit)
-  .lean()
-
-  // Combine: unverified users first, then paginated bloodbanks
-  const combined = [...transformedUsers, ...bloodBanks]
-
-  res.json(new ApiResponse(200, {
-    bloodBanks: combined,
-    total: total + unverifiedUsers.length,
-    verifiedCount
-  }, "Blood banks fetched"))
-})
-
-router.patch("/admin/bloodbanks/:id/verify", verifyJWT, async (req, res) => {
-  const { isApproved, source } = req.body
-
-  if (source === "user") {
-    // Update in User model
-    const user = await User.findByIdAndUpdate(
-      req.params.id,
-      { isApproved },
-      { new: true }
-    )
-    return res.json(new ApiResponse(200, user, "User bank verification updated"))
-  }
-
-  // Update in BloodBanks model
-  const bank = await BloodBanks.findByIdAndUpdate(
-    req.params.id,
-    { isApproved },
-    { new: true }
-  )
-  res.json(new ApiResponse(200, bank, "Verification updated"))
-})
-
-// GET /api/admin/users?role=donor&page=1&limit=10
-router.get("/admin/users", verifyJWT, async (req, res) => {
-  const { role } = req.query
-  const page = parseInt(req.query.page) || 1
-  const limit = parseInt(req.query.limit) || 10
-  const skip = (page - 1) * limit
-  const filter = ["donor", "recipient"].includes(role)
-      ? { role: "user", mode: role }
-      : { role };
-  const total = await User.countDocuments(filter)
-  const users = await User.find(filter)
-    .select("-password -refreshToken")
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit)
-    .lean()
-
-  res.json(new ApiResponse(200, { users, total }, "Users fetched"))
-})
-
-// PATCH /api/admin/users/:id/verify
-router.patch("/admin/users/:id/verify", verifyJWT, async (req, res) => {
-  const { isApproved } = req.body
-  const updatedUser = await User.findByIdAndUpdate(
-    req.params.id,
-    { isApproved },
-    { new: true }
-  ).select("-password -refreshToken")
-
-  res.json(new ApiResponse(200, updatedUser, "User verification updated"))
-})
-
-// GET /api/admin/stats
-router.get("/admin/stats", verifyJWT, async (req, res) => {
-  const users = await User.countDocuments({
-    role: "user",
-  })
-
-  const registeredBloodBanks =
-    await User.countDocuments({
-      role: "bloodbank",
-    })
-
-  const dbBloodBanks =
-    await BloodBanks.countDocuments()
-
-  const totalBloodBanks =
-    registeredBloodBanks + dbBloodBanks
-
-  res.json(
-    new ApiResponse(
-      200,
-      {
-        users,
-        bloodBanks: totalBloodBanks,
-        registeredBloodBanks,
-        dbBloodBanks,
-      },
-      "Stats fetched"
-    )
-  )
-})
 
 router.route("/dashboard/donor/register").post(verifyJWT, authorizeMode("donor"), registerDonor);
 
@@ -229,30 +79,17 @@ router.post("/blood-requests", verifyJWT, createBloodRequest);
 router.get("/blood-requests/my", verifyJWT, getMyBloodRequests);
 router.patch("/blood-requests/:id/cancel", verifyJWT, requestCancellation);
 
-// Admin routes
+// Admin — READ ONLY monitoring, no mutation
 router.get("/blood-requests", verifyJWT, authorizeRoles("admin"), getAllBloodRequests);
-router.patch("/blood-requests/:id/status", verifyJWT, authorizeRoles("admin"), updateBloodRequestStatus);
-
-// blood bank
-router.get("/blood-requests/bank", verifyJWT, authorizeRoles("bloodbank"), getBankBloodRequests)
 
 // Donor routes
 router.post("/donation-requests", verifyJWT, authorizeMode("donor"), createDonationRequest);
 router.get("/donation-requests/my", verifyJWT, authorizeMode("donor"), getMyDonationRequests);
 router.patch("/donation-requests/:id/cancel", verifyJWT, requestDonationCancellation);
+router.get("/donation-requests/:id", verifyJWT, authorizeMode("donor"), getDonationRequestDetails);
 
 // Admin donation routes
 router.get("/donation-requests", verifyJWT, authorizeRoles("admin"), getAllDonationRequests);
-router.patch("/donation-requests/:id/status", verifyJWT, authorizeRoles("admin"), updateDonationRequestStatus);
 
-
-console.log(
-  router.stack
-    .filter(r => r.route)
-    .map(r => ({
-      path: r.route.path,
-      methods: Object.keys(r.route.methods)
-    }))
-);
 
 export default router

@@ -15,21 +15,39 @@ const donationRequestSchema = new Schema({
     enum: ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"],
     required: true
   },
-  units: {
-    type: Number,
-    required: true,
-    min: 1,
-    max: 10
-  },
+  age: {
+  type: Number,
+  required: true,
+  min: 18,
+  max: 65
+},
   availability: {
-    type: String,
-    enum: ["immediate", "within_week", "within_month"],
-    default: "immediate"
-  },
+  type: Date,
+  required: true
+},
   location: {
-    type: String,
-    required: true
-  },
+  type: String,
+  required: true
+},
+
+address: {
+  type: String,
+  required: true
+},
+
+permanentAddress: {
+  type: String,
+  required: true
+},
+latitude: {
+  type: Number,
+  default: null,
+},
+
+longitude: {
+  type: Number,
+  default: null,
+},
   pincode: {
     type: String,
     required: true
@@ -42,17 +60,50 @@ const donationRequestSchema = new Schema({
     type: String
   },
   status: {
-    type: String,
-    enum: ["pending", "confirmed", "cancelled", "cancellation_requested"],
-    default: "pending"
-  },
+  type: String,
+  enum: [
+    "pending",              // not yet routed to any bank
+    "assigned",              // routed to a bank, awaiting their action
+    "accepted",              // bank accepted, donor to visit
+    "fulfilled",              // donation completed (was "confirmed")
+    "rejected",              // all assignments rejected, no bank available
+    "cancelled",
+    "cancellation_requested",
+  ],
+  default: "pending"
+},
+
   cancellationReason: {
     type: String
-  }
+  },
+  assignments: [
+    {
+      bank: {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+        required: true,
+      },
+      bankName: {
+        type: String,
+        required: true,
+      },
+      status: {
+        type: String,
+        enum: ["assigned", "accepted", "fulfilled", "rejected"],
+        default: "assigned",
+      },
+      assignedAt: { type: Date, default: Date.now },
+      acceptedAt: { type: Date, default: null },
+      fulfilledAt: { type: Date, default: null },
+      rejectedAt: { type: Date, default: null },
+      rejectionReason: { type: String, default: "" },
+    },
+  ]
 }, { timestamps: true });
 
 donationRequestSchema.index({ userId: 1 });
 donationRequestSchema.index({ status: 1 });
 donationRequestSchema.index({ pincode: 1 });
+donationRequestSchema.index({ "assignments.bank": 1 });
 
 export const DonationRequest = mongoose.model("DonationRequest", donationRequestSchema);
