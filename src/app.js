@@ -1,7 +1,7 @@
 import express from "express"
 import cors from "cors"
 import userRouter from "./routes/user.routes.js"
-import bloodbankRoutes from "./routes/bloodBank.routes.js";
+import bloodbankRoutes from "./routes/bloodbank.routes.js";
 import { ApiError } from "./utils/ApiError.js"
 import cookieParser from "cookie-parser"
 import adminRouter from "./routes/admin.routes.js";
