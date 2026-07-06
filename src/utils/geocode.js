@@ -1,5 +1,5 @@
 // utils/geocode.js
-import { PincodeCache } from "../models/pincodeCache.model.js";
+import { PincodeCache } from "../models/pinCodeCache.model.js";
 
 // Low-level: pincode -> {latitude, longitude}
 // Checks PincodeCache first, only calls Nominatim on a miss.
