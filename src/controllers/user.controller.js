@@ -38,78 +38,44 @@ const RESULT_LIMIT = 10;
 const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   const { pincode } = req.body;
 
-  if (!pincode) throw new ApiError(400, "Pincode is required");
-  if (isNaN(pincode)) throw new ApiError(400, "Pincode must be a number");
-  if (pincode.toString().length !== 6) throw new ApiError(400, "Pincode must be exactly 6 digits");
+  // ... validation same rahegi ...
 
   const requestId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-  console.log(`START REQUEST: ${requestId}`);
-  console.time(`TOTAL-${requestId}`);
+  const timings = {}; // yahan sab timings collect karenge
 
-  // 1. Exact pincode matches — same as before, untouched
-  const exactBanks = await BloodBanks.find(
-    { pincode: pincode.toString() },
-    PROJECTION
-  ).lean();
+  const overallStart = Date.now();
 
-  console.log("Exact banks found:", exactBanks.length);
+  // 1. DB connection timing — agar connectDB() yahin call hoti hai
+  const dbStart = Date.now();
+  await connectDB(); // agar already connected hai, ye turant return karega
+  timings.dbConnection = Date.now() - dbStart;
+
+  // 2. Exact match query
+  const exactStart = Date.now();
+  const exactBanks = await BloodBanks.find({ pincode: pincode.toString() }, PROJECTION).lean();
+  timings.exactMatchQuery = Date.now() - exactStart;
 
   if (exactBanks.length >= RESULT_LIMIT) {
-    console.timeEnd(`TOTAL-${requestId}`);
-    console.log(`END REQUEST: ${requestId}, Banks found: ${exactBanks.length}`);
-    return res.status(200).json(
-      new ApiResponse(200, { banks: exactBanks.slice(0, RESULT_LIMIT), isFallback: false }, "Blood banks fetched successfully")
-    );
+    timings.total = Date.now() - overallStart;
+    console.log(`[${requestId}] TIMINGS:`, timings);
+    return res.status(200).json(new ApiResponse(200, { banks: exactBanks.slice(0, RESULT_LIMIT), isFallback: false }, "..."));
   }
 
-  // 2. Need to fill remaining slots — geocode the pincode
-  console.time(`COORDINATES-${requestId}`);
+  // 3. Coordinates timing — WITH source tracking
+  const coordStart = Date.now();
   const coords = await getCoordinatesFromPincode(pincode.toString());
-  console.timeEnd(`COORDINATES-${requestId}`);
+  timings.coordinates = Date.now() - coordStart;
+  // NOTE: getCoordinatesFromPincode ke andar bhi source log karna hai (niche dikhaya hai)
 
-  // 3. $geoNear replaces fetch-all + Haversine + heap
-  const exactIds = exactBanks.map((b) => b._id);
-  const needed = RESULT_LIMIT - exactBanks.length;
+  // 4. GeoNear timing
+  const geoStart = Date.now();
+  // ... $geoNear query yahan ...
+  timings.geoNear = Date.now() - geoStart;
 
-  console.time(`GEO-NEAR-${requestId}`);
-  const nearestRaw = await BloodBanks.aggregate([
-    {
-      $geoNear: {
-        near: { type: "Point", coordinates: [coords.longitude, coords.latitude] },
-        distanceField: "distanceMeters",
-        spherical: true,
-        query: { _id: { $nin: exactIds } },
-      },
-    },
-    { $limit: needed },
-    { $project: { ...PROJECTION, distanceMeters: 1 } },
-  ]);
-  console.timeEnd(`GEO-NEAR-${requestId}`);
+  timings.total = Date.now() - overallStart;
+  console.log(`[${requestId}] TIMINGS:`, timings);
 
-  const nearestBanks = nearestRaw.map((b) => ({
-    ...b,
-    distance: Number((b.distanceMeters / 1000).toFixed(2)), // km
-  }));
-
-  const combinedBanks = [...exactBanks, ...nearestBanks];
-
-  console.timeEnd(`TOTAL-${requestId}`);
-  console.log(`END REQUEST: ${requestId}, Banks found: ${combinedBanks.length} (exact: ${exactBanks.length}, nearest: ${nearestBanks.length})`);
-
-  return res.status(200).json(
-    new ApiResponse(
-      200,
-      {
-        banks: combinedBanks,
-        isFallback: exactBanks.length === 0,
-        exactCount: exactBanks.length,
-        nearestCount: nearestBanks.length,
-      },
-      exactBanks.length > 0
-        ? "Blood banks fetched successfully"
-        : "No blood banks found in this pincode. Showing nearby blood banks."
-    )
-  );
+  return res.status(200).json(/* ... */);
 });
 
 export { fetchBloodBanksByPinCode };

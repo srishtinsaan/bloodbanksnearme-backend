@@ -45,27 +45,40 @@ const tryRegionalFallback = async (pincode) => {
 export const getCoordinatesFromPincode = async (pincode) => {
   const cached = await PincodeCache.findOne({ pincode });
   if (cached) {
+    console.log(`Coordinates source: CACHE (pincode: ${pincode})`);
     return { latitude: cached.latitude, longitude: cached.longitude };
   }
 
-  let coords =
-    (await tryStructuredSearch(pincode)) ||
-    (await tryFreeTextSearch(pincode)) ||
-    (await tryRegionalFallback(pincode));
-
-  if (!coords) {
-    throw new Error(`No coordinates found for pincode ${pincode}`);
+  const ownDbResult = await tryOwnDatabase(pincode);
+  if (ownDbResult) {
+    console.log(`Coordinates source: OWN_DATABASE (pincode: ${pincode})`);
+    // yahan bhi cache mein likh do taaki agli baar seedha CACHE se mile
+    await PincodeCache.findOneAndUpdate({ pincode }, { pincode, ...ownDbResult }, { upsert: true });
+    return ownDbResult;
   }
 
-  const { latitude, longitude } = coords;
+  const structuredResult = await tryStructuredSearch(pincode);
+  if (structuredResult) {
+    console.log(`Coordinates source: NOMINATIM_STRUCTURED (pincode: ${pincode})`);
+    await PincodeCache.findOneAndUpdate({ pincode }, { pincode, ...structuredResult }, { upsert: true });
+    return structuredResult;
+  }
 
-  await PincodeCache.findOneAndUpdate(
-    { pincode },
-    { pincode, latitude, longitude },
-    { upsert: true, new: true }
-  );
+  const freeTextResult = await tryFreeTextSearch(pincode);
+  if (freeTextResult) {
+    console.log(`Coordinates source: NOMINATIM_FREETEXT (pincode: ${pincode})`);
+    await PincodeCache.findOneAndUpdate({ pincode }, { pincode, ...freeTextResult }, { upsert: true });
+    return freeTextResult;
+  }
 
-  return { latitude, longitude };
+  const regionalResult = await tryRegionalFallback(pincode);
+  if (regionalResult) {
+    console.log(`Coordinates source: REGIONAL_FALLBACK (pincode: ${pincode})`);
+    await PincodeCache.findOneAndUpdate({ pincode }, { pincode, ...regionalResult }, { upsert: true });
+    return regionalResult;
+  }
+
+  throw new Error(`No coordinates found for pincode ${pincode}`);
 };
 
 // Wrapper for bank Users: checks the bank's own cached coords first,
