@@ -1,19 +1,6 @@
-import express from "express"
-import cors from "cors"
-import userRouter from "./routes/user.routes.js"
-import bloodbankRoutes from "./routes/bloodbank.routes.js";
-import { ApiError } from "./utils/ApiError.js"
-import cookieParser from "cookie-parser"
-import adminRouter from "./routes/admin.routes.js";
+import connectDB from "./db/index.js";
 
-import "./jobs/cleanupRequests.js";
-
-// import { verifyJWT } from "../middlewares/auth.middleware.js";
-// import { authorizeRoles } from "../middlewares/authorizeRoles.js";
-
-
-
-const app = express()
+const app = express();
 
 const PORT = process.env.PORT || 8000;
 
@@ -22,28 +9,36 @@ app.listen(PORT, () => {
 });
 
 const allowedOrigins = [
-  process.env.LOCAL_DEV, // local dev
+  process.env.LOCAL_DEV,
   process.env.DEPLOYED_ORIGIN_ONE,
-  process.env.DEPLOYED_ORIGIN_TWO // deployed frontend
+  process.env.DEPLOYED_ORIGIN_TWO
 ];
-
 
 app.use(cors({
   origin: function(origin, callback){
-    if(!origin) return callback(null, true); // allow non-browser requests like Postman
+    if(!origin) return callback(null, true);
     if(allowedOrigins.includes(origin)){
       callback(null, true);
     } else {
       callback(new Error("Not allowed by CORS"));
     }
   },
-  credentials: true, // allow cookies/auth headers
+  credentials: true,
 }));
 
-app.use(express.json({ limit: "16kb" }))
-app.use(express.urlencoded({ extended: true, limit: "16kb" })) //Prevents large payload attacks
+app.use(express.json({ limit: "16kb" }));
+app.use(express.urlencoded({ extended: true, limit: "16kb" }));
+app.use(cookieParser());
 
-app.use(cookieParser())
+// 👇 yahan add kar — DB connection ready, uske baad hi koi route hit ho
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.get("/hello123", (req, res) => {
   res.send("HELLO123");
@@ -56,6 +51,7 @@ app.get("/", (req, res) => {
 app.use("/api/v1", userRouter);
 app.use("/api/v1/bloodbanks", bloodbankRoutes);
 app.use("/api/v1/admin", adminRouter);
+
 
 app.get("/api/debug", (req, res) => {
   res.send("debug works");
