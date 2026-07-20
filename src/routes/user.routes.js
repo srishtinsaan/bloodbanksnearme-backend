@@ -91,5 +91,8 @@ router.get("/donation-requests/:id", verifyJWT, authorizeMode("donor"), getDonat
 // Admin donation routes
 router.get("/donation-requests", verifyJWT, authorizeRoles("admin"), getAllDonationRequests);
 
+router.get("/health", (req, res) => {
+  res.status(200).json({ status: "alive" });
+});
 
 export default router
