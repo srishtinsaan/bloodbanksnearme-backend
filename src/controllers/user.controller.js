@@ -50,24 +50,16 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
 
   const requestId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-  // connectDB() yahan CALL NAHI karni — middleware mein pehle hi ho chuki hai
-  // request tumtak pahunchne se pehle. Uska time req.dbConnectionTime mein
-  // pehle se mila hua hai.
   const timings = { dbConnection: req.dbConnectionTime || 0 };
   const overallStart = Date.now();
 
-  // 1. Exact match query
+  // 1. Exact match query — .explain() call yahan se hata diya, sirf normal query
   const exactStart = Date.now();
   const exactBanks = await BloodBanks.find(
     { pincode: pincode.toString() },
     PROJECTION
   ).lean();
   timings.exactMatchQuery = Date.now() - exactStart;
-
-  const explainResult = await BloodBanks.find(
-    { pincode: pincode.toString() }
-  ).explain("executionStats");
-  console.log(`[${requestId}] EXPLAIN:`, JSON.stringify(explainResult.executionStats, null, 2));
 
   if (exactBanks.length >= RESULT_LIMIT) {
     timings.total = Date.now() - overallStart;
@@ -82,7 +74,7 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
     );
   }
 
-  // 2. Coordinates (source tracking already added inside geocode.js)
+  // 2. Coordinates
   const coordStart = Date.now();
   const coords = await getCoordinatesFromPincode(pincode.toString());
   timings.coordinates = Date.now() - coordStart;
@@ -105,7 +97,7 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   const { latitude, longitude } = coords;
   const exactIds = exactBanks.map((b) => b._id);
 
-  // 3. GeoNear query — ye tha khaali comment, ab actual query hai
+  // 3. GeoNear query
   const geoStart = Date.now();
   const nearestBanks = await BloodBanks.aggregate([
     {
@@ -113,7 +105,7 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
         near: { type: "Point", coordinates: [longitude, latitude] },
         distanceField: "distance",
         spherical: true,
-        query: { _id: { $nin: exactIds } }, // exact wale dobara mat do
+        query: { _id: { $nin: exactIds } },
       },
     },
     { $limit: RESULT_LIMIT - exactBanks.length },
