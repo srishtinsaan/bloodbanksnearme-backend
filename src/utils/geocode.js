@@ -41,6 +41,16 @@ const tryRegionalFallback = async (pincode) => {
 
   return { latitude: regionalBank.latitude, longitude: regionalBank.longitude };
 };
+const tryOwnDatabase = async (pincode) => {
+  const bank = await BloodBanks.findOne({
+    pincode: pincode.toString(),
+    latitude: { $ne: null },
+    longitude: { $ne: null },
+  }).lean();
+
+  if (!bank) return null;
+  return { latitude: bank.latitude, longitude: bank.longitude };
+};
 
 export const getCoordinatesFromPincode = async (pincode) => {
   const cached = await PincodeCache.findOne({ pincode });
