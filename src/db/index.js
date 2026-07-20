@@ -1,40 +1,34 @@
 import mongoose from "mongoose";
 import { DB_NAME } from "../constants.js";
 
-let cached = global.mongooseConnection;
-
-if (!cached) {
-  cached = global.mongooseConnection = { conn: null, promise: null };
-}
-
 const connectDB = async () => {
-  if (cached.conn) {
-    console.log("MongoDB: using cached connection");
-    return cached.conn;
+  if (global.mongoose?.conn) {
+    return global.mongoose.conn;
   }
 
-  if (!cached.promise) {
-    cached.promise = mongoose
-      .connect(`${process.env.MONGODB_URI}/${DB_NAME}`, {
-        bufferCommands: false,
-      })
-      .then((mongooseInstance) => {
-        console.log(
-          `\n MongoDB connected !! DB HOST : ${mongooseInstance.connection.host}`
-        );
+  if (!global.mongoose) {
+    global.mongoose = { conn: null, promise: null };
+  }
+
+  if (!global.mongoose.promise) {
+    global.mongoose.promise = mongoose
+      .connect(`${process.env.MONGODB_URI}/${DB_NAME}`)
+      .then(async (mongooseInstance) => {
+        console.log("MongoDB connected !! DB HOST :", mongooseInstance.connection.host);
+
+        // warmup: pay TLS/pool cost here, not on the user's first real query
+        const warmStart = Date.now();
+        await mongooseInstance.connection.db
+          .collection("bloodbanks")
+          .findOne({}, { projection: { _id: 1 } });
+        console.log(`Connection warmed up in ${Date.now() - warmStart}ms`);
+
         return mongooseInstance;
       });
   }
 
-  try {
-    cached.conn = await cached.promise;
-  } catch (error) {
-    cached.promise = null;
-    console.log("MongoDB connection error ::", error);
-    throw error;
-  }
-
-  return cached.conn;
+  global.mongoose.conn = await global.mongoose.promise;
+  return global.mongoose.conn;
 };
 
 export default connectDB;
