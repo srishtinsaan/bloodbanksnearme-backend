@@ -64,6 +64,11 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   ).lean();
   timings.exactMatchQuery = Date.now() - exactStart;
 
+  const explainResult = await BloodBanks.find(
+    { pincode: pincode.toString() }
+  ).explain("executionStats");
+  console.log(`[${requestId}] EXPLAIN:`, JSON.stringify(explainResult.executionStats, null, 2));
+
   if (exactBanks.length >= RESULT_LIMIT) {
     timings.total = Date.now() - overallStart;
     console.log(`[${requestId}] TIMINGS:`, timings);
