@@ -91,8 +91,13 @@ router.get("/donation-requests/:id", verifyJWT, authorizeMode("donor"), getDonat
 // Admin donation routes
 router.get("/donation-requests", verifyJWT, authorizeRoles("admin"), getAllDonationRequests);
 
-router.get("/health", (req, res) => {
-  res.status(200).json({ status: "alive" });
+router.get("/health", async (req, res) => {
+  try {
+    await BloodBanks.findOne({}, { _id: 1 }).lean();
+    res.status(200).json({ status: "alive" });
+  } catch (err) {
+    res.status(500).json({ status: "error" });
+  }
 });
 
 export default router
