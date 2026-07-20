@@ -2,8 +2,6 @@ import { asyncHandler } from "../../src/utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { BloodBanks } from "../models/bloodbanks.model.js";
-import { haversineDistance } from "../utils/haversine.js";
-import { MinHeap } from "../utils/minHeap.js";
 import { getCoordinatesFromPincode } from "../utils/geocode.js";
 
 const PROJECTION = {
@@ -32,96 +30,84 @@ const PROJECTION = {
   latitude: 1,
   longitude: 1,
   inventory: 1,
+  pincode: 1,
 };
+
+const RESULT_LIMIT = 10;
 
 const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   const { pincode } = req.body;
 
-  if (!pincode) {
-    throw new ApiError(400, "Pincode is required");
-  }
+  if (!pincode) throw new ApiError(400, "Pincode is required");
+  if (isNaN(pincode)) throw new ApiError(400, "Pincode must be a number");
+  if (pincode.toString().length !== 6) throw new ApiError(400, "Pincode must be exactly 6 digits");
 
-  if (isNaN(pincode)) {
-    throw new ApiError(400, "Pincode must be a number");
-  }
+  const requestId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  console.log(`START REQUEST: ${requestId}`);
+  console.time(`TOTAL-${requestId}`);
 
-  if (pincode.toString().length !== 6) {
-    throw new ApiError(400, "Pincode must be exactly 6 digits");
-  }
-
-  console.log("Serving from MongoDB 💾");
-
-  // 1. Exact pincode search
+  // 1. Exact pincode matches — same as before, untouched
   const exactBanks = await BloodBanks.find(
     { pincode: pincode.toString() },
     PROJECTION
   ).lean();
 
-  if (exactBanks.length > 0) {
+  console.log("Exact banks found:", exactBanks.length);
+
+  if (exactBanks.length >= RESULT_LIMIT) {
+    console.timeEnd(`TOTAL-${requestId}`);
+    console.log(`END REQUEST: ${requestId}, Banks found: ${exactBanks.length}`);
     return res.status(200).json(
-      new ApiResponse(
-        200,
-        {
-          banks: exactBanks,
-          isFallback: false,
-        },
-        "Blood banks fetched successfully"
-      )
+      new ApiResponse(200, { banks: exactBanks.slice(0, RESULT_LIMIT), isFallback: false }, "Blood banks fetched successfully")
     );
   }
 
-  // 2. Fallback to nearest banks
+  // 2. Need to fill remaining slots — geocode the pincode
+  console.time(`COORDINATES-${requestId}`);
   const coords = await getCoordinatesFromPincode(pincode.toString());
+  console.timeEnd(`COORDINATES-${requestId}`);
 
-  if (!coords) {
-    throw new ApiError(404, "Unable to locate the entered pincode");
-  }
+  // 3. $geoNear replaces fetch-all + Haversine + heap
+  const exactIds = exactBanks.map((b) => b._id);
+  const needed = RESULT_LIMIT - exactBanks.length;
 
-  const { latitude, longitude } = coords;
-
-  const candidateBanks = await BloodBanks.find(
+  console.time(`GEO-NEAR-${requestId}`);
+  const nearestRaw = await BloodBanks.aggregate([
     {
-      latitude: { $ne: null },
-      longitude: { $ne: null },
+      $geoNear: {
+        near: { type: "Point", coordinates: [coords.longitude, coords.latitude] },
+        distanceField: "distanceMeters",
+        spherical: true,
+        query: { _id: { $nin: exactIds } },
+      },
     },
-    PROJECTION
-  ).lean();
+    { $limit: needed },
+    { $project: { ...PROJECTION, distanceMeters: 1 } },
+  ]);
+  console.timeEnd(`GEO-NEAR-${requestId}`);
 
-  if (!candidateBanks.length) {
-    throw new ApiError(404, "No blood banks found");
-  }
+  const nearestBanks = nearestRaw.map((b) => ({
+    ...b,
+    distance: Number((b.distanceMeters / 1000).toFixed(2)), // km
+  }));
 
-  const heap = new MinHeap();
+  const combinedBanks = [...exactBanks, ...nearestBanks];
 
-  for (const bank of candidateBanks) {
-    const distance = haversineDistance(
-      latitude,
-      longitude,
-      bank.latitude,
-      bank.longitude
-    );
-
-    heap.push(distance, {
-      ...bank,
-      distance: Number(distance.toFixed(2)),
-    });
-  }
-
-  const nearestBanks = [];
-  const LIMIT = 5;
-
-  while (!heap.isEmpty() && nearestBanks.length < LIMIT) {
-    nearestBanks.push(heap.pop().data);
-  }
+  console.timeEnd(`TOTAL-${requestId}`);
+  console.log(`END REQUEST: ${requestId}, Banks found: ${combinedBanks.length} (exact: ${exactBanks.length}, nearest: ${nearestBanks.length})`);
 
   return res.status(200).json(
     new ApiResponse(
       200,
       {
-        banks: nearestBanks,
-        isFallback: true,
+        banks: combinedBanks,
+        isFallback: exactBanks.length === 0,
+        exactCount: exactBanks.length,
+        nearestCount: nearestBanks.length,
       },
-      "No blood banks found in this pincode. Showing nearby blood banks."
+      exactBanks.length > 0
+        ? "Blood banks fetched successfully"
+        : "No blood banks found in this pincode. Showing nearby blood banks."
     )
   );
 });

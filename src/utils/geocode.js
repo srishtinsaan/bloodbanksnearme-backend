@@ -1,51 +1,69 @@
 // utils/geocode.js
 import { PincodeCache } from "../models/pinCodeCache.model.js";
+import { BloodBanks } from "../models/bloodbanks.model.js";
 
-// Low-level: pincode -> {latitude, longitude}
-// Checks PincodeCache first, only calls Nominatim on a miss.
+const NOMINATIM_HEADERS = {
+  "User-Agent": "BloodConnect/1.0 (contact: srish17816@gmail.com)",
+};
+
+const tryStructuredSearch = async (pincode) => {
+  const url = `https://nominatim.openstreetmap.org/search?postalcode=${pincode}&country=India&format=json`;
+  const response = await fetch(url, { headers: NOMINATIM_HEADERS });
+  if (!response.ok) return null;
+  const data = await response.json();
+  if (!data || data.length === 0) return null;
+  return { latitude: parseFloat(data[0].lat), longitude: parseFloat(data[0].lon) };
+};
+
+const tryFreeTextSearch = async (pincode) => {
+  const url = `https://nominatim.openstreetmap.org/search?q=${pincode}, India&format=json`;
+  const response = await fetch(url, { headers: NOMINATIM_HEADERS });
+  if (!response.ok) return null;
+  const data = await response.json();
+  if (!data || data.length === 0) return null;
+  return { latitude: parseFloat(data[0].lat), longitude: parseFloat(data[0].lon) };
+};
+
+// Last resort: find a BloodBanks doc in the same postal region (same first
+// 3 digits = same city/district in the Indian PIN system) and use its
+// coordinates as an approximate center. Better than failing the search
+// entirely — the resulting "nearest banks" will still be genuinely close.
+const tryRegionalFallback = async (pincode) => {
+  const regionPrefix = pincode.toString().slice(0, 3);
+
+  const regionalBank = await BloodBanks.findOne({
+    pincode: { $regex: `^${regionPrefix}` },
+    latitude: { $ne: null },
+    longitude: { $ne: null },
+  }).lean();
+
+  if (!regionalBank) return null;
+
+  return { latitude: regionalBank.latitude, longitude: regionalBank.longitude };
+};
+
 export const getCoordinatesFromPincode = async (pincode) => {
   const cached = await PincodeCache.findOne({ pincode });
   if (cached) {
     return { latitude: cached.latitude, longitude: cached.longitude };
   }
 
-  const url = `https://nominatim.openstreetmap.org/search?postalcode=${pincode}&country=India&format=json`;
+  let coords =
+    (await tryStructuredSearch(pincode)) ||
+    (await tryFreeTextSearch(pincode)) ||
+    (await tryRegionalFallback(pincode));
 
-  const response = await fetch(url, {
-    headers: {
-      // Nominatim requires a descriptive User-Agent identifying the app
-      "User-Agent": "BloodConnect/1.0 (contact: srish17816@gmail.com)",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Nominatim request failed with status ${response.status}`);
-  }
-
-  const data = await response.json();
-
-  if (!data || data.length === 0) {
+  if (!coords) {
     throw new Error(`No coordinates found for pincode ${pincode}`);
   }
 
-  const latitude = parseFloat(data[0].lat);
-  const longitude = parseFloat(data[0].lon);
+  const { latitude, longitude } = coords;
 
-  // Write-through cache so the next lookup for this pincode is free.
-// Uses an atomic upsert instead of create() — if two requests for the
-// same previously-unseen pincode race each other, both may miss the
-// cache above and reach this point simultaneously. create() would
-// throw a duplicate-key error for the second write since `pincode`
-// has a unique index. findOneAndUpdate with upsert:true is atomic at
-// the DB level, so the second call just matches the first call's
-// document instead of erroring.
-await PincodeCache.findOneAndUpdate(
-  { pincode },
-  { pincode, latitude, longitude },
-  { upsert: true, new: true }
-);
-
-return { latitude, longitude };
+  await PincodeCache.findOneAndUpdate(
+    { pincode },
+    { pincode, latitude, longitude },
+    { upsert: true, new: true }
+  );
 
   return { latitude, longitude };
 };

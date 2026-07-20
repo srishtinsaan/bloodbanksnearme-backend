@@ -10,8 +10,8 @@ const bloodbanksSchema = new Schema({
     pincode: { type: String },
     contactNo: { type: String },
     mobile: {
-    type: String,
-},
+        type: String,
+    },
     helpline: { type: String },
     fax: { type: String },
     email: { type: String },
@@ -33,10 +33,20 @@ const bloodbanksSchema = new Schema({
 
     latitude: { type: Number },
     longitude: { type: Number },
+    location: {
+      type: {
+        type: String,
+        enum: ["Point"],
+      },
+      coordinates: {
+        type: [Number],
+      },
+    },
+
     isVerified: {
-    type: Boolean,
-    default: false
-},
+        type: Boolean,
+        default: false
+    },
 
 verificationStatus: {
     type: String,
@@ -79,5 +89,6 @@ documents: {
 }, {timestamps : true})
 
 bloodbanksSchema.index({ pincode: 1 });
+bloodbanksSchema.index({ location: "2dsphere" });
 
 export const BloodBanks = mongoose.model("BloodBanks", bloodbanksSchema)
