@@ -1,3 +1,18 @@
+import express from "express"
+import cors from "cors"
+import userRouter from "./routes/user.routes.js"
+import bloodbankRoutes from "./routes/bloodbank.routes.js";
+import { ApiError } from "./utils/ApiError.js"
+import cookieParser from "cookie-parser"
+import adminRouter from "./routes/admin.routes.js";
+
+import "./jobs/cleanupRequests.js";
+
+// import { verifyJWT } from "../middlewares/auth.middleware.js";
+// import { authorizeRoles } from "../middlewares/authorizeRoles.js";
+
+
+
 import connectDB from "./db/index.js";
 
 const app = express();
@@ -51,6 +66,7 @@ app.get("/", (req, res) => {
 app.use("/api/v1", userRouter);
 app.use("/api/v1/bloodbanks", bloodbankRoutes);
 app.use("/api/v1/admin", adminRouter);
+
 
 
 app.get("/api/debug", (req, res) => {
