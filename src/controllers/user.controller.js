@@ -3,6 +3,7 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { BloodBanks } from "../models/bloodbanks.model.js";
 import { getCoordinatesFromPincode } from "../utils/geocode.js";
+import { redis } from "../utils/redisClient.js";
 
 const PROJECTION = {
   bloodBankName: 1,
@@ -34,6 +35,7 @@ const PROJECTION = {
 };
 
 const RESULT_LIMIT = 10;
+const CACHE_TTL_SECONDS = 60; // short TTL — inventory badal sakti hai, isliye 1 minute hi
 
 const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   const { pincode } = req.body;
@@ -49,11 +51,26 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   }
 
   const requestId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-
   const timings = { dbConnection: req.dbConnectionTime || 0 };
   const overallStart = Date.now();
 
-  // 1. Exact match query — .explain() call yahan se hata diya, sirf normal query
+  const cacheKey = `search:${pincode}`;
+
+  // 1. Cache check — sabse pehle, MongoDB tak jaane se pehle
+  const cacheStart = Date.now();
+  const cached = await redis.get(cacheKey);
+  timings.cacheCheck = Date.now() - cacheStart;
+
+  if (cached) {
+    timings.total = Date.now() - overallStart;
+    timings.source = "REDIS_CACHE";
+    console.log(`[${requestId}] TIMINGS:`, timings);
+
+    // Upstash client JSON ko automatically parse kar deta hai agar object store kiya tha
+    return res.status(200).json(cached);
+  }
+
+  // 2. Exact match query
   const exactStart = Date.now();
   const exactBanks = await BloodBanks.find(
     { pincode: pincode.toString() },
@@ -62,42 +79,43 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   timings.exactMatchQuery = Date.now() - exactStart;
 
   if (exactBanks.length >= RESULT_LIMIT) {
+    const responseData = new ApiResponse(
+      200,
+      { banks: exactBanks.slice(0, RESULT_LIMIT), isFallback: false },
+      "Blood banks fetched successfully"
+    );
+
+    // Cache mein daalo, agli baar seedha yahi mile
+    await redis.set(cacheKey, responseData, { ex: CACHE_TTL_SECONDS });
+
     timings.total = Date.now() - overallStart;
     console.log(`[${requestId}] TIMINGS:`, timings);
-
-    return res.status(200).json(
-      new ApiResponse(
-        200,
-        { banks: exactBanks.slice(0, RESULT_LIMIT), isFallback: false },
-        "Blood banks fetched successfully"
-      )
-    );
+    return res.status(200).json(responseData);
   }
 
-  // 2. Coordinates
+  // 3. Coordinates
   const coordStart = Date.now();
   const coords = await getCoordinatesFromPincode(pincode.toString());
   timings.coordinates = Date.now() - coordStart;
 
   if (!coords) {
+    const responseData = new ApiResponse(
+      200,
+      { banks: exactBanks, isFallback: false },
+      exactBanks.length > 0
+        ? "Blood banks fetched successfully"
+        : "Unable to locate the entered pincode"
+    );
+
     timings.total = Date.now() - overallStart;
     console.log(`[${requestId}] TIMINGS:`, timings);
-
-    return res.status(200).json(
-      new ApiResponse(
-        200,
-        { banks: exactBanks, isFallback: false },
-        exactBanks.length > 0
-          ? "Blood banks fetched successfully"
-          : "Unable to locate the entered pincode"
-      )
-    );
+    return res.status(200).json(responseData);
   }
 
   const { latitude, longitude } = coords;
   const exactIds = exactBanks.map((b) => b._id);
 
-  // 3. GeoNear query
+  // 4. GeoNear query
   const geoStart = Date.now();
   const nearestBanks = await BloodBanks.aggregate([
     {
@@ -115,23 +133,26 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
 
   const combinedBanks = [...exactBanks, ...nearestBanks];
 
+  const responseData = new ApiResponse(
+    200,
+    {
+      banks: combinedBanks,
+      isFallback: exactBanks.length === 0,
+      exactCount: exactBanks.length,
+      nearestCount: nearestBanks.length,
+    },
+    exactBanks.length > 0
+      ? "Blood banks fetched successfully"
+      : "No blood banks found in this pincode. Showing nearby blood banks."
+  );
+
+  // 5. Cache mein daalo — agli baar isi pincode ke liye MongoDB tak jaana hi nahi padega
+  await redis.set(cacheKey, responseData, { ex: CACHE_TTL_SECONDS });
+
   timings.total = Date.now() - overallStart;
   console.log(`[${requestId}] TIMINGS:`, timings);
 
-  return res.status(200).json(
-    new ApiResponse(
-      200,
-      {
-        banks: combinedBanks,
-        isFallback: exactBanks.length === 0,
-        exactCount: exactBanks.length,
-        nearestCount: nearestBanks.length,
-      },
-      exactBanks.length > 0
-        ? "Blood banks fetched successfully"
-        : "No blood banks found in this pincode. Showing nearby blood banks."
-    )
-  );
+  return res.status(200).json(responseData);
 });
 
 export { fetchBloodBanksByPinCode };
