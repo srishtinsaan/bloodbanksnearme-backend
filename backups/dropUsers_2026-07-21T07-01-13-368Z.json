@@ -1,0 +1,131 @@
+[
+  {
+    "_id": "6a48ec1fea19ea291a3f9961",
+    "username": "bank_nearby",
+    "email": "bank_nearby@test.com",
+    "password": "$2b$10$HbaoS8ENz5bNejSAY5sWSOrgiuYdCzxYJzVDuQZkyL4zHI5njG5My",
+    "isEmailVerified": false,
+    "role": "bloodbank",
+    "mode": null,
+    "pincode": "302017",
+    "licenseNumber": "LIC-0001",
+    "latitude": 26.8391981,
+    "longitude": 75.8305161,
+    "inventory": {
+      "A+": 0,
+      "B+": 2,
+      "O+": 5,
+      "O-": 1,
+      "AB-": 0,
+      "A-": 0,
+      "B-": 0,
+      "AB+": 0
+    },
+    "isApproved": true,
+    "createdAt": "2026-07-04T11:18:55.737Z",
+    "updatedAt": "2026-07-21T05:59:48.974Z",
+    "__v": 0,
+    "location": {
+      "type": "Point",
+      "coordinates": [
+        75.8305161,
+        26.8391981
+      ]
+    }
+  },
+  {
+    "_id": "6a48ec1fea19ea291a3f9964",
+    "username": "bank_unapproved",
+    "email": "bank_unapproved@test.com",
+    "password": "$2b$10$3ty4Xak.XXyU4pOWsC696OSsSRXaI2gE9X5zZfkklRqQZpIkYQ2Kq",
+    "isEmailVerified": false,
+    "role": "bloodbank",
+    "mode": null,
+    "pincode": "302017",
+    "licenseNumber": "LIC-0004",
+    "latitude": null,
+    "longitude": null,
+    "inventory": {
+      "O+": 50,
+      "AB-": 10,
+      "A+": 0,
+      "A-": 0,
+      "B+": 0,
+      "B-": 0,
+      "O-": 0,
+      "AB+": 0
+    },
+    "isApproved": false,
+    "createdAt": "2026-07-04T11:18:55.738Z",
+    "updatedAt": "2026-07-04T11:18:55.738Z",
+    "__v": 0
+  },
+  {
+    "_id": "6a48ec1fea19ea291a3f9962",
+    "username": "bank_medium",
+    "email": "bank_medium@test.com",
+    "password": "$2b$10$cXF8bq2X.5HHBrLHhC7cQulC6TgV7fWShyQsq48/5lEU4sPwwgsly",
+    "isEmailVerified": false,
+    "role": "bloodbank",
+    "mode": null,
+    "pincode": "302021",
+    "licenseNumber": "LIC-0002",
+    "latitude": 26.9039988,
+    "longitude": 75.7409547,
+    "inventory": {
+      "A+": 3,
+      "B+": 0,
+      "O+": 10,
+      "O-": 0,
+      "AB-": 0,
+      "A-": 0,
+      "B-": 0,
+      "AB+": 0
+    },
+    "isApproved": true,
+    "createdAt": "2026-07-04T11:18:55.738Z",
+    "updatedAt": "2026-07-21T05:59:48.974Z",
+    "__v": 0,
+    "location": {
+      "type": "Point",
+      "coordinates": [
+        75.7409547,
+        26.9039988
+      ]
+    }
+  },
+  {
+    "_id": "6a48ec1fea19ea291a3f9963",
+    "username": "bank_far_but_stocked",
+    "email": "bank_far@test.com",
+    "password": "$2b$10$lkk0gVi7Lu7q0LeCYRpaEeAFZFPiEdl578tEvrnpGZ74jkZEfj89e",
+    "isEmailVerified": false,
+    "role": "bloodbank",
+    "mode": null,
+    "pincode": "110001",
+    "licenseNumber": "LIC-0003",
+    "latitude": 28.6292358,
+    "longitude": 77.2191959,
+    "inventory": {
+      "A+": 15,
+      "B+": 8,
+      "O+": 20,
+      "O-": 2,
+      "AB-": 1,
+      "A-": 0,
+      "B-": 0,
+      "AB+": 0
+    },
+    "isApproved": true,
+    "createdAt": "2026-07-04T11:18:55.738Z",
+    "updatedAt": "2026-07-21T05:59:48.974Z",
+    "__v": 0,
+    "location": {
+      "type": "Point",
+      "coordinates": [
+        77.2191959,
+        28.6292358
+      ]
+    }
+  }
+]

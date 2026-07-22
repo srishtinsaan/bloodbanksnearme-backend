@@ -1,0 +1,80 @@
+[
+  {
+    "_id": "6a5f0da251b83fef205477a5",
+    "userId": "6a48ec1fea19ea291a3f9961",
+    "licenseNumber": "LIC-0001",
+    "pincode": "302017",
+    "location": {
+      "type": "Point",
+      "coordinates": [
+        75.8305161,
+        26.8391981
+      ]
+    },
+    "inventory": {
+      "A+": 0,
+      "A-": 0,
+      "B+": 2,
+      "B-": 0,
+      "O+": 5,
+      "O-": 1,
+      "AB+": 0,
+      "AB-": 0
+    },
+    "createdAt": "2026-07-21T06:11:46.176Z",
+    "updatedAt": "2026-07-21T06:11:46.176Z",
+    "__v": 0
+  },
+  {
+    "_id": "6a5f0da251b83fef205477a8",
+    "userId": "6a48ec1fea19ea291a3f9962",
+    "licenseNumber": "LIC-0002",
+    "pincode": "302021",
+    "location": {
+      "type": "Point",
+      "coordinates": [
+        75.7409547,
+        26.9039988
+      ]
+    },
+    "inventory": {
+      "A+": 3,
+      "A-": 0,
+      "B+": 0,
+      "B-": 0,
+      "O+": 10,
+      "O-": 0,
+      "AB+": 0,
+      "AB-": 0
+    },
+    "createdAt": "2026-07-21T06:11:46.264Z",
+    "updatedAt": "2026-07-21T06:11:46.264Z",
+    "__v": 0
+  },
+  {
+    "_id": "6a5f0da251b83fef205477ab",
+    "userId": "6a48ec1fea19ea291a3f9963",
+    "licenseNumber": "LIC-0003",
+    "pincode": "110001",
+    "location": {
+      "type": "Point",
+      "coordinates": [
+        77.2191959,
+        28.6292358
+      ]
+    },
+    "inventory": {
+      "A+": 15,
+      "A-": 0,
+      "B+": 8,
+      "B-": 0,
+      "O+": 20,
+      "O-": 2,
+      "AB+": 0,
+      "AB-": 1
+    },
+    "createdAt": "2026-07-21T06:11:46.356Z",
+    "updatedAt": "2026-07-21T06:11:46.356Z",
+    "__v": 0
+  }
+]

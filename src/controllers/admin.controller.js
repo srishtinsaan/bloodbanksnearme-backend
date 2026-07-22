@@ -2,7 +2,9 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { User } from "../models/user.model.js";
-import { BloodRequest } from "../models/bloodRequest.model.js"; // ADD — adjust path/casing if your model file differs
+import { BankProfile } from "../models/bankProfile.model.js"; // adjust path/casing if needed
+import { BloodRequest } from "../models/bloodRequest.model.js";
+import { DonationRequest } from "../models/donationRequest.model.js";
 
 // GET /api/v1/admin/users?role=donor&page=1&limit=10
 export const getAllUsers = asyncHandler(async (req, res) => {
@@ -18,7 +20,21 @@ export const getAllUsers = asyncHandler(async (req, res) => {
     : {};
 
   const total = await User.countDocuments(filter);
-  const verifiedTotal = await User.countDocuments({ ...filter, isApproved: true });
+
+  // isApproved no longer exists on User at all (admin approval for
+  // donor/recipient accounts was removed — identity is verified via
+  // isEmailVerified today, Aadhaar eKYC later; no admin gate for those roles).
+  // Bloodbank accounts never verify by email at all — they're gated purely
+  // by BankProfile.isApproved — so "verified" means something different
+  // depending on role and has to be computed accordingly, not with a single
+  // isEmailVerified count that would silently read as 0 for every bank.
+  let verifiedTotal;
+  if (filter.role === "bloodbank") {
+    const approvedUserIds = await BankProfile.find({ isApproved: true }).distinct("userId");
+    verifiedTotal = approvedUserIds.length;
+  } else {
+    verifiedTotal = await User.countDocuments({ ...filter, isEmailVerified: true });
+  }
 
   const users = await User.find(filter)
     .select("-password -refreshToken")
@@ -31,6 +47,8 @@ export const getAllUsers = asyncHandler(async (req, res) => {
 });
 
 // PATCH /api/v1/admin/users/:id/verify
+// This endpoint is bloodbank-only. Donor/recipient accounts have no
+// admin-controlled approval flag — nothing to verify here.
 export const verifyBank = asyncHandler(async (req, res) => {
   const { isApproved } = req.body;
 
@@ -38,15 +56,23 @@ export const verifyBank = asyncHandler(async (req, res) => {
     throw new ApiError(400, "isApproved must be a boolean");
   }
 
-  const updatedUser = await User.findByIdAndUpdate(
-    req.params.id,
+  const user = await User.findById(req.params.id).select("role username");
+  if (!user) throw new ApiError(404, "User not found");
+  if (user.role !== "bloodbank") {
+    throw new ApiError(400, "This endpoint only verifies bloodbank accounts");
+  }
+
+  const updatedProfile = await BankProfile.findOneAndUpdate(
+    { userId: user._id },
     { isApproved },
     { new: true }
-  ).select("-password -refreshToken");
+  );
 
-  if (!updatedUser) throw new ApiError(404, "User not found");
+  if (!updatedProfile) throw new ApiError(404, "Bank profile not found for this user");
 
-  return res.json(new ApiResponse(200, updatedUser, "User verification updated"));
+  return res.json(
+    new ApiResponse(200, { user, bankProfile: updatedProfile }, "Bank verification updated")
+  );
 });
 
 // GET /api/v1/admin/stats
@@ -54,12 +80,19 @@ export const getStats = asyncHandler(async (req, res) => {
   const users = await User.countDocuments({ role: "user" });
 
   const totalBanks = await User.countDocuments({ role: "bloodbank" });
-  const verifiedBanks = await User.countDocuments({ role: "bloodbank", isApproved: true });
+  // verified-bank count comes from BankProfile, not User.
+  const verifiedBanks = await BankProfile.countDocuments({ isApproved: true });
 
   const pendingRequests = await BloodRequest.countDocuments({ status: "pending" });
   const assignedRequests = await BloodRequest.countDocuments({ status: "assigned" });
   const fulfilledRequests = await BloodRequest.countDocuments({ status: "fulfilled" });
   const rejectedRequests = await BloodRequest.countDocuments({ status: "rejected" });
+
+  const pendingDonations = await DonationRequest.countDocuments({ status: "pending" });
+  const assignedDonations = await DonationRequest.countDocuments({ status: "assigned" });
+  const acceptedDonations = await DonationRequest.countDocuments({ status: "accepted" });
+  const fulfilledDonations = await DonationRequest.countDocuments({ status: "fulfilled" });
+  const rejectedDonations = await DonationRequest.countDocuments({ status: "rejected" });
 
   return res.json(
     new ApiResponse(
@@ -76,20 +109,22 @@ export const getStats = asyncHandler(async (req, res) => {
           fulfilled: fulfilledRequests,
           rejected: rejectedRequests,
         },
+        donations: {
+          pending: pendingDonations,
+          assigned: assignedDonations,
+          accepted: acceptedDonations,
+          fulfilled: fulfilledDonations,
+          rejected: rejectedDonations,
+        },
       },
       "Stats fetched"
     )
   );
 });
 
-// GET /api/v1/admin/blood-requests/:id — single request, full timeline
-// (admin-scoped counterpart to getBloodRequestDetailsForBank, which is bank-scoped)
-export const getBloodRequestDetailsForAdmin = asyncHandler(async (req, res) => {
-  const request = await BloodRequest.findById(req.params.id)
-    .populate("assignments.bank", "username email phone licenseNumber")
-    .lean();
-
-  if (!request) throw new ApiError(404, "Request not found");
-
-  return res.json(new ApiResponse(200, request, "Request details fetched"));
-});
+// NOTE: getBloodRequestDetailsForAdmin used to be defined here too, but
+// admin.routes.js has always imported and used the version from
+// bloodRequest.controller.js instead (which now also returns the
+// chronological assignments timeline + routingSummary) — this file's copy
+// was dead code, never actually reachable through any route, so it's been
+// removed rather than kept in sync with two copies of the same logic.

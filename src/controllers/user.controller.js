@@ -1,10 +1,14 @@
 import { asyncHandler } from "../../src/utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
-import { BloodBanks } from "../models/bloodbanks.model.js";
+import { BankProfile } from "../models/bankProfile.model.js";
 import { getCoordinatesFromPincode } from "../utils/geocode.js";
 import { redis } from "../utils/redisClient.js";
 
+// FIXED: licenseNo -> licenseNumber (actual BankProfile schema field name;
+// the old key silently returned undefined instead of erroring). Also
+// dropped latitude/longitude — BankProfile has no such fields, only the
+// GeoJSON `location` field, which is now projected instead.
 const PROJECTION = {
   bloodBankName: 1,
   address: 1,
@@ -25,17 +29,18 @@ const PROJECTION = {
   mobileNodalOfficer: 1,
   emailNodalOfficer: 1,
   qualificationNodalOfficer: 1,
-  licenseNo: 1,
+  licenseNumber: 1,
   dateLicenseObtained: 1,
   dateOfRenewal: 1,
-  latitude: 1,
-  longitude: 1,
+  location: 1,
   inventory: 1,
   pincode: 1,
 };
 
 const RESULT_LIMIT = 10;
 const CACHE_TTL_SECONDS = 60; // short TTL — inventory badal sakti hai, isliye 1 minute hi
+
+const CRITICAL_THRESHOLD_KM = 150; // isse zyada -> critical warning + alternate suggestion
 
 const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   const { pincode } = req.body;
@@ -58,7 +63,12 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
 
   // 1. Cache check — sabse pehle, MongoDB tak jaane se pehle
   const cacheStart = Date.now();
-  const cached = await redis.get(cacheKey);
+  let cached = null;
+  try {
+    cached = await redis.get(cacheKey);
+  } catch (err) {
+    console.log(`[${requestId}] Redis GET failed, falling back to DB:`, err.message);
+  }
   timings.cacheCheck = Date.now() - cacheStart;
 
   if (cached) {
@@ -72,7 +82,7 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
 
   // 2. Exact match query
   const exactStart = Date.now();
-  const exactBanks = await BloodBanks.find(
+  const exactBanks = await BankProfile.find(
     { pincode: pincode.toString() },
     PROJECTION
   ).lean();
@@ -81,16 +91,20 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   if (exactBanks.length >= RESULT_LIMIT) {
     const responseData = new ApiResponse(
       200,
-      { banks: exactBanks.slice(0, RESULT_LIMIT), isFallback: false },
+      { banks: exactBanks.slice(0, RESULT_LIMIT), isFallback: false, distanceWarning: null },
       "Blood banks fetched successfully"
     );
 
-    // Cache mein daalo, agli baar seedha yahi mile
-    await redis.set(cacheKey, responseData, { ex: CACHE_TTL_SECONDS });
-
     timings.total = Date.now() - overallStart;
     console.log(`[${requestId}] TIMINGS:`, timings);
-    return res.status(200).json(responseData);
+
+    res.status(200).json(responseData);
+
+    // Cache mein daalo — response ke baad, non-blocking
+    redis.set(cacheKey, responseData, { ex: CACHE_TTL_SECONDS }).catch((err) =>
+      console.log(`[${requestId}] Redis SET failed (non-fatal):`, err.message)
+    );
+    return;
   }
 
   // 3. Coordinates
@@ -101,7 +115,7 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   if (!coords) {
     const responseData = new ApiResponse(
       200,
-      { banks: exactBanks, isFallback: false },
+      { banks: exactBanks, isFallback: false, distanceWarning: null },
       exactBanks.length > 0
         ? "Blood banks fetched successfully"
         : "Unable to locate the entered pincode"
@@ -117,42 +131,63 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
 
   // 4. GeoNear query
   const geoStart = Date.now();
-  const nearestBanks = await BloodBanks.aggregate([
+  const nearestBanks = await BankProfile.aggregate([
     {
       $geoNear: {
         near: { type: "Point", coordinates: [longitude, latitude] },
-        distanceField: "distance",
+        distanceField: "distanceMeters",
         spherical: true,
         query: { _id: { $nin: exactIds } },
       },
     },
     { $limit: RESULT_LIMIT - exactBanks.length },
-    { $project: { ...PROJECTION, distance: 1 } },
+    {
+      $project: {
+        ...PROJECTION,
+        distance: { $round: [{ $divide: ["$distanceMeters", 1000] }, 2] },
+      },
+    },
   ]);
   timings.geoNear = Date.now() - geoStart;
 
   const combinedBanks = [...exactBanks, ...nearestBanks];
+
+  // Distance warning — only relevant when we had to fall back to nearby banks
+  const farthestNearbyDistance = nearestBanks.length > 0
+    ? Math.max(...nearestBanks.map((b) => b.distance))
+    : 0;
+
+  let distanceWarning = null;
+  if (exactBanks.length === 0 && farthestNearbyDistance > CRITICAL_THRESHOLD_KM) {
+    distanceWarning = {
+      level: "critical",
+      message: `No blood banks found near this pincode. Nearest option is ${farthestNearbyDistance} km away — consider contacting a nearby district hospital or blood helpline for urgent needs.`,
+    };
+  }
 
   const responseData = new ApiResponse(
     200,
     {
       banks: combinedBanks,
       isFallback: exactBanks.length === 0,
+      distanceWarning,
       exactCount: exactBanks.length,
       nearestCount: nearestBanks.length,
     },
     exactBanks.length > 0
       ? "Blood banks fetched successfully"
-      : "No blood banks found in this pincode. Showing nearby blood banks."
+      : "Showing nearby blood banks"
   );
-
-  // 5. Cache mein daalo — agli baar isi pincode ke liye MongoDB tak jaana hi nahi padega
-  await redis.set(cacheKey, responseData, { ex: CACHE_TTL_SECONDS });
 
   timings.total = Date.now() - overallStart;
   console.log(`[${requestId}] TIMINGS:`, timings);
 
-  return res.status(200).json(responseData);
+  res.status(200).json(responseData);
+
+  // 5. Cache mein daalo — response ke baad, non-blocking
+  redis.set(cacheKey, responseData, { ex: CACHE_TTL_SECONDS }).catch((err) =>
+    console.log(`[${requestId}] Redis SET failed (non-fatal):`, err.message)
+  );
 });
 
 export { fetchBloodBanksByPinCode };

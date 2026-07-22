@@ -2,54 +2,215 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { BloodRequest } from "../models/bloodRequest.model.js";
-import { User } from "../models/user.model.js";
-import { haversineDistance } from "../utils/haversine.js";
-import { MinHeap } from "../utils/minHeap.js";
-import { getBankCoordinates, getCoordinatesFromPincode } from "../utils/geocode.js";
+import { BankProfile } from "../models/bankProfile.model.js"; // adjust path/casing if needed
+import { getCoordinatesFromPincode } from "../utils/geocode.js";
+import { sweepStaleTerminalRequests, NOT_DELETED } from "../utils/staleRequestCleanup.js";
 
-// Core routing logic: given a request's coordinates + blood type + units needed,
-// find the nearest verified bank that ALREADY has enough stock.
-// Stock is filtered at the query level, so the heap only ever ranks valid candidates
-// — the first pop is always the answer, no "pop until stock found" loop needed.
-// excludeBankIds lets us skip banks that already rejected this request.
-const findNearestAvailableBank = async ({
+
+// ────────────────────────────────────────────────────────────────────────
+// MULTI-BANK ROUTING / SPLITTING ENGINE
+//
+// Goal: given a request's coordinates + blood type + units needed, find the
+// cheapest way to cover it — a single bank if one has enough stock, or a
+// pair of banks (size-2) if none does. Capped at size-2, no size-3.
+//
+// Design (per user's handwritten notes):
+//   1. Fetch candidates within 50km via $geoNear (already sorted by distance).
+//   2. Size-1: first candidate (in sorted order) whose stock alone covers
+//      `units` — early exit, since sorted order guarantees it's nearest.
+//   3. Size-2: K = min(n, 10). Generate all KC2 pairs from the top-K nearest
+//      candidates, cost = distKm(A) + distKm(B) + SPLIT_PENALTY_KM. Track
+//      the best pair via a running minimum (no need to store all pairs).
+//   4. Compare best-single vs best-pair, return whichever costs less.
+//   5. Fallback: if nothing at all qualifies within 50km, expand to 100km,
+//      fetch only the genuinely-new banks (exclude ones already seen), merge
+//      with the original sorted list. Re-check is incremental:
+//        - size-1: only check the newly-added banks (old ones already failed)
+//        - size-2: only evaluate new×old and new×new pairs — old×old pairs
+//          are skipped since they were already evaluated in round 1 and are
+//          known not to beat "nothing found" (i.e. known to fail too).
+//   6. If still nothing within 100km, caller gets null — request stays
+//      unassigned/pending for admin monitoring, same as today.
+// ────────────────────────────────────────────────────────────────────────
+
+const INITIAL_RADIUS_METERS = 50_000;
+const EXPANDED_RADIUS_METERS = 100_000;
+const MAX_PAIR_CANDIDATES = 10; // K cap for size-2 pair generation
+const SPLIT_PENALTY_KM = 5; // extra "cost" for needing a second bank instead of one — tune as needed
+
+const fetchCandidatesWithinRadius = async ({
   latitude,
   longitude,
   bloodType,
-  units,
-  excludeBankIds = [],
+  excludeBankIds,
+  maxDistance,
 }) => {
-  if (latitude == null || longitude == null) return null;
+  // Only banks with SOME stock of this blood type are worth considering at
+  // all (a bank with 0 units can never contribute to either a single-bank
+  // or a pair-bank plan), so we filter that at the DB level to keep the
+  // candidate set small from the start.
+  return BankProfile.aggregate([
+    {
+      $geoNear: {
+        near: { type: "Point", coordinates: [longitude, latitude] },
+        distanceField: "distanceMeters",
+        spherical: true,
+        maxDistance,
+        query: {
+          isApproved: true,
+          userId: { $nin: excludeBankIds },
+          [`inventory.${bloodType}`]: { $gt: 0 },
+        },
+      },
+    },
+  ]);
+};
 
-  const candidateBanks = await User.find({
-    role: "bloodbank",
-    isApproved: true,
-    _id: { $nin: excludeBankIds },
-    [`inventory.${bloodType}`]: { $gte: units },
-  });
+// candidates must be sorted by distanceMeters ascending (guaranteed by $geoNear)
+const findBestSingle = (candidates, bloodType, units) => {
+  const match = candidates.find((c) => (c.inventory?.[bloodType] || 0) >= units);
+  if (!match) return null;
 
-  if (candidateBanks.length === 0) return null;
+  return {
+    cost: match.distanceMeters / 1000,
+    plan: [{ profile: match, unitsAssigned: units }],
+  };
+};
 
-  const heap = new MinHeap();
+const allPairIndices = (n) => {
+  const pairs = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) pairs.push([i, j]);
+  }
+  return pairs;
+};
 
-  for (const bank of candidateBanks) {
-    const coords = await getBankCoordinates(bank);
-    if (!coords) continue; // skip banks we couldn't geocode
+// Skips old×old pairs (i < oldCount && j < oldCount) — those were already
+// evaluated in a previous round. Includes new×old and new×new.
+const incrementalPairIndices = (n, oldCount) => {
+  const pairs = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const bothOld = i < oldCount && j < oldCount;
+      if (!bothOld) pairs.push([i, j]);
+    }
+  }
+  return pairs;
+};
 
-    const distance = haversineDistance(
-      latitude,
-      longitude,
-      coords.latitude,
-      coords.longitude
-    );
-    heap.push(distance, bank);
+const evaluatePairs = (topK, bloodType, units, indexPairs) => {
+  let best = null;
+
+  for (const [i, j] of indexPairs) {
+    const a = topK[i];
+    const b = topK[j];
+    const stockA = a.inventory?.[bloodType] || 0;
+    const stockB = b.inventory?.[bloodType] || 0;
+
+    if (stockA + stockB < units) continue;
+
+    // Fill as much as possible from the nearer bank first, remainder from
+    // the second — topK is distance-sorted so `a` here is whichever of the
+    // pair comes first in the sorted array, not necessarily globally nearer
+    // than every other candidate, but it is nearer than `b` within this pair.
+    const unitsFromA = Math.min(stockA, units);
+    const unitsFromB = units - unitsFromA;
+
+    const cost = a.distanceMeters / 1000 + b.distanceMeters / 1000 + SPLIT_PENALTY_KM;
+
+    if (!best || cost < best.cost) {
+      best = {
+        cost,
+        plan: [
+          { profile: a, unitsAssigned: unitsFromA },
+          { profile: b, unitsAssigned: unitsFromB },
+        ],
+      };
+    }
   }
 
-  if (heap.isEmpty()) return null;
-
-  const { data: nearestBank } = heap.pop();
-  return nearestBank;
+  return best;
 };
+
+// Runs size-1 + size-2 for one round of candidates. `oldCount` (when > 0)
+// restricts pair generation to new×old/new×new only, skipping old×old.
+const routeSingleRound = ({ candidates, bloodType, units, oldCount = 0 }) => {
+  const K = Math.min(candidates.length, MAX_PAIR_CANDIDATES);
+  const topK = candidates.slice(0, K);
+
+  const single = findBestSingle(candidates, bloodType, units);
+
+  const indexPairs =
+    oldCount > 0
+      ? incrementalPairIndices(topK.length, Math.min(oldCount, K))
+      : allPairIndices(topK.length);
+
+  const pair = evaluatePairs(topK, bloodType, units, indexPairs);
+
+  const options = [single, pair].filter(Boolean);
+  if (options.length === 0) return null;
+
+  return options.reduce((best, curr) => (curr.cost < best.cost ? curr : best));
+};
+
+// Both inputs are individually distance-sorted ($geoNear guarantees this),
+// so a simple two-pointer merge keeps the combined list sorted without a
+// full re-sort.
+const mergeSortedByDistance = (a, b) => {
+  const merged = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    merged.push(a[i].distanceMeters <= b[j].distanceMeters ? a[i++] : b[j++]);
+  }
+  while (i < a.length) merged.push(a[i++]);
+  while (j < b.length) merged.push(b[j++]);
+  return merged;
+};
+
+// Top-level entry point. Returns { cost, plan: [{ profile, unitsAssigned }, ...] }
+// or null if nothing qualifies even after expanding to 100km.
+const findRoutingPlan = async ({ latitude, longitude, bloodType, units, excludeBankIds = [] }) => {
+  if (latitude == null || longitude == null) return null;
+
+  const initialCandidates = await fetchCandidatesWithinRadius({
+    latitude,
+    longitude,
+    bloodType,
+    excludeBankIds,
+    maxDistance: INITIAL_RADIUS_METERS,
+  });
+
+  const roundOneBest = routeSingleRound({ candidates: initialCandidates, bloodType, units });
+  if (roundOneBest) return roundOneBest;
+
+  // Nothing within 50km covers it (neither alone nor paired). Expand to
+  // 100km — exclude banks we've already fetched so this second call only
+  // returns genuinely new candidates.
+  const alreadySeenIds = initialCandidates.map((c) => c.userId);
+  const expandedNewCandidates = await fetchCandidatesWithinRadius({
+    latitude,
+    longitude,
+    bloodType,
+    excludeBankIds: [...excludeBankIds, ...alreadySeenIds],
+    maxDistance: EXPANDED_RADIUS_METERS,
+  });
+
+  if (expandedNewCandidates.length === 0) return null;
+
+  const merged = mergeSortedByDistance(initialCandidates, expandedNewCandidates);
+
+  return routeSingleRound({
+    candidates: merged,
+    bloodType,
+    units,
+    oldCount: initialCandidates.length,
+  });
+};
+
+// ────────────────────────────────────────────────────────────────────────
+// CONTROLLERS
+// ────────────────────────────────────────────────────────────────────────
 
 // POST /api/blood-requests — create + auto-route
 export const createBloodRequest = asyncHandler(async (req, res) => {
@@ -67,6 +228,9 @@ export const createBloodRequest = asyncHandler(async (req, res) => {
     targetBankName,
     targetBankPincode,
     isTargeted,
+    patientName,
+    relationToPatient,
+    patientAge,
   } = req.body;
 
   if (
@@ -82,13 +246,26 @@ export const createBloodRequest = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Required fields missing");
   }
 
-  // geocode the request's own pincode — this is what actually drives distance
-  // calculations, so it has to happen at creation time, not left to the client
+  if (!req.user.isEmailVerified) {
+    throw new ApiError(403, "Please verify your email before requesting blood");
+  }
+
+  const resolvedRelation = relationToPatient || "self";
+  const resolvedPatientName =
+    resolvedRelation === "self" ? patientName || req.user.username : patientName;
+
+  if (!resolvedPatientName) {
+    throw new ApiError(400, "Patient name is required");
+  }
+
   const { latitude, longitude } = await getCoordinatesFromPincode(pincode);
 
   const request = await BloodRequest.create({
     userId: req.user._id,
     username: req.user.username,
+    patientName: resolvedPatientName,
+    relationToPatient: resolvedRelation,
+    patientAge: patientAge || null,
     bloodType,
     units,
     urgency,
@@ -106,41 +283,40 @@ export const createBloodRequest = asyncHandler(async (req, res) => {
     isTargeted: isTargeted || false,
   });
 
-  let assignedBank = null;
+  let routingPlan = null;
 
-  // if the recipient targeted a specific bank, try that one first
+  // targeted-bank attempt stays single-bank-only by design — splitting only
+  // kicks in for the untargeted/nearest-available path
   if (isTargeted && targetBankName) {
-    const targeted = await User.findOne({
-      role: "bloodbank",
+    const targeted = await BankProfile.findOne({
       isApproved: true,
-      username: targetBankName,
+      bloodBankName: targetBankName, // NOTE: verify this is the correct field name on BankProfile
     });
 
     if (targeted && (targeted.inventory?.[bloodType] || 0) >= units) {
-      assignedBank = targeted;
+      routingPlan = {
+        cost: 0,
+        plan: [{ profile: targeted, unitsAssigned: units }],
+      };
     }
   }
 
-  // otherwise (or if targeted bank lacks stock), fall back to nearest-available search
-  if (!assignedBank) {
-    assignedBank = await findNearestAvailableBank({
-      latitude,
-      longitude,
-      bloodType,
-      units,
-    });
+  if (!routingPlan) {
+    routingPlan = await findRoutingPlan({ latitude, longitude, bloodType, units });
   }
 
-  if (assignedBank) {
-    request.assignments.push({
-      bank: assignedBank._id,
-      bankName: assignedBank.username,
-      unitsAssigned: units,
-      status: "assigned",
-    });
+  if (routingPlan) {
+    for (const { profile, unitsAssigned } of routingPlan.plan) {
+      request.assignments.push({
+        bank: profile.userId, // User._id — keeps auth matching (req.user._id) unchanged
+        bankName: profile.bloodBankName,
+        unitsAssigned,
+        status: "assigned",
+      });
+    }
     request.status = "assigned";
   }
-  // else: request stays "pending" — no bank currently has stock, visible to admin for monitoring
+  // else: request stays "pending" — no bank(s) currently cover it, visible to admin for monitoring
 
   await request.save();
 
@@ -151,7 +327,8 @@ export const createBloodRequest = asyncHandler(async (req, res) => {
 
 // GET /api/blood-requests/my — recipient's own requests
 export const getMyBloodRequests = asyncHandler(async (req, res) => {
-  const requests = await BloodRequest.find({ userId: req.user._id })
+  await sweepStaleTerminalRequests(BloodRequest);
+  const requests = await BloodRequest.find({ userId: req.user._id, ...NOT_DELETED })
     .sort({ createdAt: -1 })
     .lean();
 
@@ -159,20 +336,29 @@ export const getMyBloodRequests = asyncHandler(async (req, res) => {
 });
 
 // GET /api/blood-requests — ADMIN, READ-ONLY MONITORING
-// no mutation capability lives here anymore
+//
+// CHANGED: each request now carries a `banksTriedCount` so the admin list
+// view shows routing activity (e.g. "3 banks tried") without needing to
+// open every request individually — full detail/timeline still lives in
+// getBloodRequestDetailsForAdmin.
 export const getAllBloodRequests = asyncHandler(async (req, res) => {
   const { status, page = 1, limit = 10 } = req.query;
   const skip = (page - 1) * limit;
 
-  const filter = status && status !== "all" ? { status } : {};
+    const filter = status && status !== "all" ? { status, ...NOT_DELETED } : { ...NOT_DELETED };
 
   const total = await BloodRequest.countDocuments(filter);
-  const requests = await BloodRequest.find(filter)
+  const rawRequests = await BloodRequest.find(filter)
     .populate("assignments.bank", "username email phone")
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(Number(limit))
     .lean();
+
+  const requests = rawRequests.map((r) => ({
+  ...r,
+  banksTriedCount: (r.assignments || []).length,
+}));
 
   return res.json(new ApiResponse(200, { requests, total }, "All requests fetched"));
 });
@@ -204,7 +390,9 @@ export const requestCancellation = asyncHandler(async (req, res) => {
 
 // GET /api/bloodbanks/requests — bank's own assigned requests
 export const getBankBloodRequests = asyncHandler(async (req, res) => {
-  const requests = await BloodRequest.find({ "assignments.bank": req.user._id })
+  await sweepStaleTerminalRequests(BloodRequest);
+
+  const requests = await BloodRequest.find({ "assignments.bank": req.user._id, ...NOT_DELETED })
     .sort({ createdAt: -1 })
     .lean();
 
@@ -242,7 +430,15 @@ export const acceptBloodRequest = asyncHandler(async (req, res) => {
 
   assignment.status = "accepted";
   assignment.acceptedAt = new Date();
-  request.status = "accepted";
+
+  // With splitting, request.status should reflect accepted only once ALL
+  // live (non-rejected) assignments are accepted — otherwise it stays
+  // "assigned" while other banks in the split still haven't responded.
+  const liveAssignments = request.assignments.filter((a) => a.status !== "rejected");
+  const allAccepted = liveAssignments.every((a) =>
+    ["accepted", "fulfilled"].includes(a.status)
+  );
+  if (allAccepted) request.status = "accepted";
 
   await request.save();
 
@@ -268,33 +464,46 @@ export const rejectBloodRequest = asyncHandler(async (req, res) => {
     throw new ApiError(400, "This request cannot be rejected at its current stage");
   }
 
+  const rejectedUnits = assignment.unitsAssigned;
+
   assignment.status = "rejected";
   assignment.rejectedAt = new Date();
   assignment.rejectionReason = rejectionReason || "";
 
-  // try to re-route to the next-nearest bank, excluding every bank that's
-  // already been assigned to this request (not just the one that just rejected)
+  // Only re-source the units THIS bank was covering — not the whole
+  // request — so an already-accepted partner bank in a split assignment
+  // isn't disturbed. Exclude every bank already involved in this request
+  // (any status) to avoid re-assigning the same bank twice.
   const excludeBankIds = request.assignments.map((a) => a.bank);
 
-  const nextBank = await findNearestAvailableBank({
+  const replacementPlan = await findRoutingPlan({
     latitude: request.latitude,
     longitude: request.longitude,
     bloodType: request.bloodType,
-    units: request.units,
+    units: rejectedUnits,
     excludeBankIds,
   });
 
-  if (nextBank) {
-    request.assignments.push({
-      bank: nextBank._id,
-      bankName: nextBank.username,
-      unitsAssigned: request.units,
-      status: "assigned",
-    });
+  if (replacementPlan) {
+    for (const { profile, unitsAssigned } of replacementPlan.plan) {
+      request.assignments.push({
+        bank: profile.userId,
+        bankName: profile.bloodBankName,
+        unitsAssigned,
+        status: "assigned",
+      });
+    }
     request.status = "assigned";
   } else {
-    // no other bank available — request has no live assignment, admin monitors it
-    request.status = "rejected";
+    // No replacement found for the rejected portion. If other live
+    // assignments still exist (e.g. the other half of a split that's still
+    // accepted/fulfilled), leave the request's overall status as-is so
+    // that coverage isn't lost — only mark fully "rejected" if nothing
+    // live remains at all.
+    const stillLive = request.assignments.some((a) =>
+      ["assigned", "accepted", "fulfilled"].includes(a.status)
+    );
+    if (!stillLive) request.status = "rejected";
   }
 
   await request.save();
@@ -303,6 +512,12 @@ export const rejectBloodRequest = asyncHandler(async (req, res) => {
 });
 
 // GET /api/admin/blood-requests/:id — admin, read-only, any request
+//
+// CHANGED: now surfaces the full routing flow — assignments are never
+// deleted (a rejection just mutates that entry's status, a re-route pushes
+// a new entry), so the array already holds the complete history of every
+// bank this request was ever routed to. This just sorts it chronologically
+// and adds a summary so the admin UI doesn't have to compute it client-side.
 export const getBloodRequestDetailsForAdmin = asyncHandler(async (req, res) => {
   const request = await BloodRequest.findById(req.params.id)
     .populate("assignments.bank", "username email phone pincode")
@@ -310,10 +525,27 @@ export const getBloodRequestDetailsForAdmin = asyncHandler(async (req, res) => {
 
   if (!request) throw new ApiError(404, "Blood request not found");
 
-  return res.json(new ApiResponse(200, request, "Blood request details fetched"));
+  const timeline = [...(request.assignments || [])].sort(
+  (a, b) => new Date(a.assignedAt) - new Date(b.assignedAt)
+);
+
+  const routingSummary = {
+    totalBanksTried: timeline.length,
+    statusBreakdown: timeline.reduce((acc, a) => {
+      acc[a.status] = (acc[a.status] || 0) + 1;
+      return acc;
+    }, {}),
+  };
+
+  return res.json(
+    new ApiResponse(
+      200,
+      { ...request, assignments: timeline, routingSummary },
+      "Blood request details fetched"
+    )
+  );
 });
 
-// PATCH /api/bloodbanks/requests/:id/fulfill
 // PATCH /api/bloodbanks/requests/:id/fulfill
 export const fulfillBloodRequest = asyncHandler(async (req, res) => {
   const request = await BloodRequest.findOne({
@@ -331,24 +563,24 @@ export const fulfillBloodRequest = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Only accepted requests can be fulfilled");
   }
 
-  const bank = await User.findById(req.user._id);
-  const currentStock = bank.inventory?.[request.bloodType] || 0;
+  const bankProfile = await BankProfile.findOne({ userId: req.user._id });
+  if (!bankProfile) throw new ApiError(404, "Bank profile not found");
+
+  const currentStock = bankProfile.inventory?.[request.bloodType] || 0;
 
   if (currentStock < assignment.unitsAssigned) {
     throw new ApiError(400, "Insufficient inventory to fulfill this request");
   }
 
-  bank.inventory[request.bloodType] = currentStock - assignment.unitsAssigned;
-  await bank.save();
+  bankProfile.inventory[request.bloodType] = currentStock - assignment.unitsAssigned;
+  await bankProfile.save();
 
   assignment.status = "fulfilled";
   assignment.fulfilledAt = new Date();
 
-  // Sum units across ALL fulfilled assignments, not just this one — with
-  // splitting disabled there's only ever one assignment, so this collapses
-  // to the same value as assignment.unitsAssigned. Once splitting is turned
-  // on, this same loop correctly handles multiple banks each fulfilling
-  // part of the request, with no further changes needed here.
+  // Sum units across ALL fulfilled assignments — now genuinely exercised by
+  // split (size-2) assignments, not just a pass-through for the single-bank
+  // case.
   const totalFulfilledUnits = request.assignments
     .filter((a) => a.status === "fulfilled")
     .reduce((sum, a) => sum + a.unitsAssigned, 0);
@@ -356,8 +588,6 @@ export const fulfillBloodRequest = asyncHandler(async (req, res) => {
   if (totalFulfilledUnits >= request.units) {
     request.status = "fulfilled";
   } else {
-    // Partial coverage — only reachable once splitting is enabled, since
-    // right now a single assignment's unitsAssigned always equals request.units.
     request.status = "partially_fulfilled";
   }
 

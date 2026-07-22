@@ -3,6 +3,8 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
 import { User } from "../models/user.model.js";
+import { BankProfile } from "../models/bankProfile.model.js";
+import { getCoordinatesFromPincode } from "../utils/geocode.js";
 import { sendEmail } from "../utils/sendEmail.js";
 
 
@@ -57,6 +59,11 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new ApiError(400, "License number is required for blood banks");
   }
 
+  // If bloodbank, pincode is required — it's what we geocode BankProfile.location from
+  if (role === "bloodbank" && !pincode) {
+    throw new ApiError(400, "Pincode is required for blood banks");
+  }
+
   const existingUser = await User.findOne({
     $or: [{ email }, { username }]
   });
@@ -74,6 +81,33 @@ const registerUser = asyncHandler(async (req, res) => {
     pincode,
     licenseNumber: role === "bloodbank" ? licenseNumber : undefined
   });
+
+  if (role === "bloodbank") {
+    // Geocode at registration time so BankProfile.location (required field)
+    // is populated immediately — bank is invisible to $geoNear until this exists.
+    const { latitude, longitude } = await getCoordinatesFromPincode(pincode);
+
+    const location = {
+      type: "Point",
+      coordinates: [longitude, latitude],
+    };
+
+    // Also written onto User for now — kept in sync during the migration
+    // transition (Phase 1-5). Once controllers fully read from BankProfile
+    // (Phase 6), these User-side geo fields can be dropped.
+    user.latitude = latitude;
+    user.longitude = longitude;
+    user.location = location;
+    await user.save({ validateBeforeSave: false });
+
+    await BankProfile.create({
+      userId: user._id,
+      licenseNumber,
+      pincode,
+      location,
+      // inventory defaults to all-zero via schema defaults
+    });
+  }
 
   if (role === "user") {
     const otp = generateOTP();
@@ -112,10 +146,17 @@ const loginUser = asyncHandler(async (req, res) => {
   throw new ApiError(400, "Password is required");
 }
 
+
 let user;
 
 if (licenseNumber) {
-  user = await User.findOne({ licenseNumber, role: "bloodbank" });
+  // CHANGED: licenseNumber lives on BankProfile now, not User — resolve
+  // through the profile, then load the actual auth-identity User.
+  const bankProfile = await BankProfile.findOne({ licenseNumber });
+  if (!bankProfile) {
+    throw new ApiError(404, "User not found");
+  }
+  user = await User.findById(bankProfile.userId);
 } else if (username) {
   user = await User.findOne({ username });
 } else {

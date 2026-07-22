@@ -1,0 +1,85 @@
+{
+  "fixResults": [
+    {
+      "bloodBankName": "District Hospital Blood Bank",
+      "basis": "Upper Siang district HQ = Yingkiong town center",
+      "coords": [
+        28.6104,
+        95.0475
+      ],
+      "found": true,
+      "_id": "6a5f0c9651b83fef2054581c"
+    },
+    {
+      "bloodBankName": "Prakash Blood Bank & Blood Component Seperation Unit",
+      "basis": "pincode 415409 = Urun Islampur, Sangli, Maharashtra",
+      "coords": [
+        17.05,
+        74.267
+      ],
+      "found": true,
+      "_id": "6a5f0d2c51b83fef2054698f"
+    },
+    {
+      "bloodBankName": "Government Head Quarters Hospital, Ooty",
+      "basis": "Ooty town center",
+      "coords": [
+        11.41,
+        76.7
+      ],
+      "found": true,
+      "_id": "6a5f0d6b51b83fef20547112"
+    },
+    {
+      "bloodBankName": "M/s Astha Blood Bank and Components, Astha Multispeciality Hospital",
+      "basis": "city='Barut' assumed to be 'Baraut', Baghpat district, UP — NOT CONFIRMED, spot-check full address before trusting",
+      "coords": [
+        29.1672,
+        77.4414
+      ],
+      "uncertain": true,
+      "found": true,
+      "_id": "6a5f0d7751b83fef205472a4"
+    },
+    {
+      "bloodBankName": "Jeevan Rekha Charitable Blood Bank",
+      "basis": "city='Pilibhit', UP — town center",
+      "coords": [
+        28.6267,
+        79.8058
+      ],
+      "found": true,
+      "_id": "6a5f0d8351b83fef2054740f"
+    },
+    {
+      "bloodBankName": "S.D. Hospital Blood Bank  Ranaghat",
+      "basis": "pincode 741201 = Ranaghat, Nadia, West Bengal",
+      "coords": [
+        23.1724,
+        88.5556
+      ],
+      "found": true,
+      "_id": "6a5f0d9951b83fef2054769d"
+    }
+  ],
+  "deleteResults": [
+    {
+      "bloodBankName": "Gor Banjara RSS Jankalyan Samiti - Seva Blood Bank",
+      "found": true,
+      "bankProfileId": "6a5f0d2251b83fef20546869",
+      "userId": "6a48e73c2272552e1dd93b2d"
+    },
+    {
+      "bloodBankName": "Kailashi Super Speciality Hospital",
+      "found": true,
+      "bankProfileId": "6a5f0d8251b83fef205473f1",
+      "userId": "6a48e8722272552e1dd946dc"
+    },
+    {
+      "bloodBankName": "Jeevandeep Hospital Blood Bank & Componant Center",
+      "found": true,
+      "bankProfileId": "6a5f0d9651b83fef2054763d",
+      "userId": "6a48e8b82272552e1dd94931"
+    }
+  ]
+}

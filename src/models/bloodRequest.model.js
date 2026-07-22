@@ -13,6 +13,30 @@ const bloodRequestSchema = new Schema(
       required: true,
     },
 
+    // ── requester vs. patient — NOT the same person by default ──
+    // userId/username above identify the ACCOUNT making the request (the
+    // accountable, authenticated party). patientName/relationToPatient
+    // describe who the blood is actually FOR. Identity verification (email
+    // OTP today, Aadhaar later) verifies the requester — it says nothing
+    // about the patient, and shouldn't be conflated with it.
+    patientName: {
+      type: String,
+      required: true,
+      // for relationToPatient: "self", controller defaults this to the
+      // requester's own username if the client doesn't send one explicitly.
+    },
+
+    relationToPatient: {
+      type: String,
+      enum: ["self", "family", "friend", "other"],
+      default: "self",
+    },
+
+    patientAge: {
+      type: Number,
+      default: null,
+    },
+
     bloodType: {
       type: String,
       enum: ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"],
@@ -118,7 +142,12 @@ const bloodRequestSchema = new Schema(
       {
         bank: {
           type: Schema.Types.ObjectId,
-          ref: "User", // bloodbank-role User, not the static BloodBanks directory
+          ref: "User", // still the bloodbank-role User (its login/auth identity —
+          // this is what req.user._id matches against in accept/reject/fulfill).
+          // Domain data (inventory, location, license, approval) lives on
+          // BankProfile, looked up via BankProfile.userId when needed — this
+          // ref intentionally stays pointed at User so bank-scoped auth checks
+          // ("assignments.bank": req.user._id) don't need to change.
           required: true,
         },
         bankName: {
@@ -142,7 +171,8 @@ const bloodRequestSchema = new Schema(
         rejectionReason: { type: String, default: "" },
       },
     ],
-
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date, default: null },
     // ── broadcast fallback (critical requests only) ──
     broadcastActive: {
       type: Boolean,
@@ -153,8 +183,6 @@ const bloodRequestSchema = new Schema(
       type: Number,
       default: null,
     },
-
-    
   },
   { timestamps: true }
 );
@@ -163,6 +191,7 @@ bloodRequestSchema.index({ userId: 1 });
 bloodRequestSchema.index({ status: 1 });
 bloodRequestSchema.index({ pincode: 1 });
 bloodRequestSchema.index({ "assignments.bank": 1 });
+bloodRequestSchema.index({ isDeleted: 1 });
 
 export const BloodRequest = mongoose.model(
   "BloodRequest",

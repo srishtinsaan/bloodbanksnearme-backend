@@ -1,11 +1,12 @@
 import { Router } from "express";
 import { fetchBloodBanksByPinCode } from "../controllers/user.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
+import { authLimiter } from "../middlewares/rateLimiter.js";
 import { loginUser, registerUser, logoutUser, refreshAccessToken, verifyEmailOTP, resendOTP } from "../controllers/auth.controller.js";
-import { BloodBanks } from "../models/bloodbanks.model.js"; 
+
 import { User } from "../models/user.model.js"; 
-import {registerDonor} from "../controllers/donor.controller.js"
-import {Donor} from "../models/donor.model.js"
+import { BankProfile } from "../models/bankProfile.model.js";
+
 import { authorizeRoles } from "../middlewares/authorizeRoles.js";
 import { authorizeMode } from "../middlewares/authorizeMode.js";
 import { ApiError } from "../utils/ApiError.js";
@@ -51,9 +52,6 @@ router.route("/auth/logout").post(verifyJWT, logoutUser)
 
 router.route("/auth/refresh-token").post(refreshAccessToken)
 
-
-router.route("/dashboard/donor/register").post(verifyJWT, authorizeMode("donor"), registerDonor);
-
 router.patch("/auth/set-mode", verifyJWT, async (req, res) => {
   const { mode } = req.body;
 
@@ -93,7 +91,7 @@ router.get("/donation-requests", verifyJWT, authorizeRoles("admin"), getAllDonat
 
 router.get("/health", async (req, res) => {
   try {
-    await BloodBanks.findOne({}, { _id: 1 }).lean();
+    await BankProfile.findOne({}, { _id: 1 }).lean();
     res.status(200).json({ status: "alive" });
   } catch (err) {
     res.status(500).json({ status: "error" });

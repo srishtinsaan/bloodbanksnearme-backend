@@ -41,10 +41,10 @@ const userSchema = new Schema(
       required: true
     },
     mode: {
-  type: String,
-  enum: ["donor", "recipient", null],
-  default: null
-},
+      type: String,
+      enum: ["donor", "recipient", null],
+      default: null
+    },
 
     phone: {
       type: String,
@@ -61,87 +61,52 @@ const userSchema = new Schema(
       enum: ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"]
     },
 
-    // Only required for blood banks
-    licenseNumber: {
-      type: String,
-      required: function () {
-        return this.role === "bloodbank";
-      }
-    },
-    latitude: {
-      type: Number,
-      default: null,
-    },
-
-    longitude: {
-      type: Number,
-      default: null,
-    },
-
-    inventory: {
-      "A+": { type: Number, default: 0 },
-      "A-": { type: Number, default: 0 },
-      "B+": { type: Number, default: 0 },
-      "B-": { type: Number, default: 0 },
-      "O+": { type: Number, default: 0 },
-      "O-": { type: Number, default: 0 },
-      "AB+": { type: Number, default: 0 },
-      "AB-": { type: Number, default: 0 },
-    },
-
-    // Blood banks must be approved by admin
-    isApproved: {
-      type: Boolean,
-      default: function () {
-        return this.role === "bloodbank" ? false : true;
-      }
-    },
+    
 
     refreshToken: {
       type: String
     }
+
+    // Removed (now live exclusively on BankProfile, keyed by userId):
+    //   licenseNumber, latitude, longitude, location, inventory
+    // and the userSchema.index({ location: "2dsphere" }) call below it.
   },
   { timestamps: true }
 );
 
+userSchema.pre("save", async function (next) {
+  if (this.isModified("password")) {
+    this.password = await bcrypt.hash(this.password, 10);
+    next();
+  } else {
+    return next();
+  }
+});
 
-userSchema.pre("save", async function(next){
-    if(this.isModified("password")){
-        this.password = await bcrypt.hash(this.password, 10)
-        next()
-    }else{
-        return next()
+userSchema.methods.isPasswordCorrect = async function (password) {
+  return await bcrypt.compare(password, this.password);
+};
+
+userSchema.methods.generateAccessToken = function () {
+  return jwt.sign(
+    {
+      _id: this._id,
+      email: this.email,
+      role: this.role
+    },
+    process.env.ACCESS_TOKEN_SECRET,
+    {
+      expiresIn: process.env.ACCESS_TOKEN_EXPIRY
     }
-})
+  );
+};
 
-userSchema.methods.isPasswordCorrect = async function(password){
-    return await bcrypt.compare(password, this.password)
-}
+userSchema.methods.generateRefreshToken = function () {
+  return jwt.sign(
+    { _id: this._id },
+    process.env.REFRESH_TOKEN_SECRET,
+    { expiresIn: process.env.REFRESH_TOKEN_EXPIRY }
+  );
+};
 
-userSchema.methods.generateAccessToken = function(){ // sign is a sync function not async function
-    return jwt.sign(
-        //payload
-        {
-            _id : this._id,
-            email: this.email,
-            role: this.role
-            
-
-        },
-        process.env.ACCESS_TOKEN_SECRET,
-        {
-            expiresIn : process.env.ACCESS_TOKEN_EXPIRY
-        }
-    )
-}
-userSchema.methods.generateRefreshToken = function(){
-    return jwt.sign(
-        //payload
-        { _id : this._id }, 
-        process.env.REFRESH_TOKEN_SECRET,
-        { expiresIn : process.env.REFRESH_TOKEN_EXPIRY }
-    )
-}
-
-
-export const User = mongoose.model("User", userSchema)
+export const User = mongoose.model("User", userSchema);

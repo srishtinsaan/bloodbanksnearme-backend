@@ -1,6 +1,6 @@
 // utils/geocode.js
 import { PincodeCache } from "../models/pinCodeCache.model.js";
-import { BloodBanks } from "../models/bloodbanks.model.js";
+import { BankProfile } from "../models/bankProfile.model.js";
 
 const NOMINATIM_HEADERS = {
   "User-Agent": "BloodConnect/1.0 (contact: srish17816@gmail.com)",
@@ -24,32 +24,40 @@ const tryFreeTextSearch = async (pincode) => {
   return { latitude: parseFloat(data[0].lat), longitude: parseFloat(data[0].lon) };
 };
 
-// Last resort: find a BloodBanks doc in the same postal region (same first
+// Last resort: find a BankProfile doc in the same postal region (same first
 // 3 digits = same city/district in the Indian PIN system) and use its
 // coordinates as an approximate center. Better than failing the search
 // entirely — the resulting "nearest banks" will still be genuinely close.
+//
+// CHANGED: reads from BankProfile now, not BloodBanks. BankProfile stores
+// geo data as a GeoJSON `location` field (coordinates: [longitude, latitude]),
+// not flat latitude/longitude fields, so the extraction shape changed too.
 const tryRegionalFallback = async (pincode) => {
   const regionPrefix = pincode.toString().slice(0, 3);
 
-  const regionalBank = await BloodBanks.findOne({
+  const regionalBank = await BankProfile.findOne({
     pincode: { $regex: `^${regionPrefix}` },
-    latitude: { $ne: null },
-    longitude: { $ne: null },
+    location: { $exists: true },
   }).lean();
 
   if (!regionalBank) return null;
 
-  return { latitude: regionalBank.latitude, longitude: regionalBank.longitude };
+  const [longitude, latitude] = regionalBank.location.coordinates;
+  return { latitude, longitude };
 };
+
+// CHANGED: reads from BankProfile now, not BloodBanks — same reasoning as
+// tryRegionalFallback above.
 const tryOwnDatabase = async (pincode) => {
-  const bank = await BloodBanks.findOne({
+  const bank = await BankProfile.findOne({
     pincode: pincode.toString(),
-    latitude: { $ne: null },
-    longitude: { $ne: null },
+    location: { $exists: true },
   }).lean();
 
   if (!bank) return null;
-  return { latitude: bank.latitude, longitude: bank.longitude };
+
+  const [longitude, latitude] = bank.location.coordinates;
+  return { latitude, longitude };
 };
 
 export const getCoordinatesFromPincode = async (pincode) => {
@@ -91,18 +99,15 @@ export const getCoordinatesFromPincode = async (pincode) => {
   throw new Error(`No coordinates found for pincode ${pincode}`);
 };
 
-// Wrapper for bank Users: checks the bank's own cached coords first,
-// falls back to getCoordinatesFromPincode, then writes back onto the User doc.
-export const getBankCoordinates = async (bankUser) => {
-  if (bankUser.latitude != null && bankUser.longitude != null) {
-    return { latitude: bankUser.latitude, longitude: bankUser.longitude };
-  }
-
-  const { latitude, longitude } = await getCoordinatesFromPincode(bankUser.pincode);
-
-  bankUser.latitude = latitude;
-  bankUser.longitude = longitude;
-  await bankUser.save();
-
-  return { latitude, longitude };
-};
+// NOTE: getBankCoordinates has been removed. It read/wrote latitude/longitude
+// directly on a User doc, which no longer exists on the User schema — the
+// caching it provided was already silently broken (Mongoose strict mode
+// drops the write, so it re-geocoded on every call). Its only known caller
+// was the pre-migration donationRequest.controller.js's findNearestBankForDonation,
+// which has since been rewritten to use $geoNear on BankProfile.location
+// directly and no longer needs a per-bank coordinate lookup at all.
+//
+// If a project-wide search turns up another caller, it should be rewritten
+// against BankProfile (e.g. accepting a BankProfile doc and reading its
+// `location.coordinates` instead of flat lat/lng fields) rather than restored
+// as-is.
