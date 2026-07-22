@@ -42,94 +42,83 @@ const CACHE_TTL_SECONDS = 60; // short TTL — inventory badal sakti hai, isliye
 
 const CRITICAL_THRESHOLD_KM = 150; // isse zyada -> critical warning + alternate suggestion
 
+// Updated Controller supporting both GPS Coordinates and Pincode search
 const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
-  const { pincode } = req.body;
+  // Accept both lat/lng and pincode from the request body (or query)
+  const { pincode, lat, lng } = req.body;
 
-  if (!pincode) {
-    throw new ApiError(400, "Pincode is required");
-  }
-  if (isNaN(pincode)) {
-    throw new ApiError(400, "Pincode must be a number");
-  }
-  if (pincode.toString().length !== 6) {
-    throw new ApiError(400, "Pincode must be exactly 6 digits");
-  }
+  let latitude = lat ? parseFloat(lat) : null;
+  let longitude = lng ? parseFloat(lng) : null;
+  let exactBanks = [];
 
   const requestId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const timings = { dbConnection: req.dbConnectionTime || 0 };
   const overallStart = Date.now();
 
-  const cacheKey = `search:${pincode}`;
+  // If user searched via Pincode and didn't provide GPS
+  if ((latitude == null || longitude == null) && pincode) {
+    if (isNaN(pincode)) {
+      throw new ApiError(400, "Pincode must be a number");
+    }
+    if (pincode.toString().length !== 6) {
+      throw new ApiError(400, "Pincode must be exactly 6 digits");
+    }
 
-  // 1. Cache check — sabse pehle, MongoDB tak jaane se pehle
-  const cacheStart = Date.now();
-  let cached = null;
-  try {
-    cached = await redis.get(cacheKey);
-  } catch (err) {
-    console.log(`[${requestId}] Redis GET failed, falling back to DB:`, err.message);
+    const cacheKey = `search:pincode:${pincode}`;
+    
+    // 1. Cache check for pincode
+    const cacheStart = Date.now();
+    let cached = null;
+    try {
+      cached = await redis.get(cacheKey);
+    } catch (err) {
+      console.log(`[${requestId}] Redis GET failed:`, err.message);
+    }
+    timings.cacheCheck = Date.now() - cacheStart;
+
+    if (cached) {
+      return res.status(200).json(cached);
+    }
+
+    // 2. Exact match query by pincode
+    const exactStart = Date.now();
+    exactBanks = await BankProfile.find(
+      { pincode: pincode.toString() },
+      PROJECTION
+    ).lean();
+    timings.exactMatchQuery = Date.now() - exactStart;
+
+    if (exactBanks.length >= RESULT_LIMIT) {
+      const responseData = new ApiResponse(
+        200,
+        { banks: exactBanks.slice(0, RESULT_LIMIT), isFallback: false, distanceWarning: null },
+        "Blood banks fetched successfully"
+      );
+      redis.set(cacheKey, responseData, { ex: CACHE_TTL_SECONDS }).catch(() => {});
+      return res.status(200).json(responseData);
+    }
+
+    // 3. Resolve coordinates from pincode if exact match isn't enough
+    const coords = await getCoordinatesFromPincode(pincode.toString());
+    if (coords) {
+      latitude = coords.latitude;
+      longitude = coords.longitude;
+    }
   }
-  timings.cacheCheck = Date.now() - cacheStart;
 
-  if (cached) {
-    timings.total = Date.now() - overallStart;
-    timings.source = "REDIS_CACHE";
-    console.log(`[${requestId}] TIMINGS:`, timings);
-
-    // Upstash client JSON ko automatically parse kar deta hai agar object store kiya tha
-    return res.status(200).json(cached);
-  }
-
-  // 2. Exact match query
-  const exactStart = Date.now();
-  const exactBanks = await BankProfile.find(
-    { pincode: pincode.toString() },
-    PROJECTION
-  ).lean();
-  timings.exactMatchQuery = Date.now() - exactStart;
-
-  if (exactBanks.length >= RESULT_LIMIT) {
-    const responseData = new ApiResponse(
-      200,
-      { banks: exactBanks.slice(0, RESULT_LIMIT), isFallback: false, distanceWarning: null },
-      "Blood banks fetched successfully"
-    );
-
-    timings.total = Date.now() - overallStart;
-    console.log(`[${requestId}] TIMINGS:`, timings);
-
-    res.status(200).json(responseData);
-
-    // Cache mein daalo — response ke baad, non-blocking
-    redis.set(cacheKey, responseData, { ex: CACHE_TTL_SECONDS }).catch((err) =>
-      console.log(`[${requestId}] Redis SET failed (non-fatal):`, err.message)
-    );
-    return;
-  }
-
-  // 3. Coordinates
-  const coordStart = Date.now();
-  const coords = await getCoordinatesFromPincode(pincode.toString());
-  timings.coordinates = Date.now() - coordStart;
-
-  if (!coords) {
+  // If we still don't have coordinates after trying both methods
+  if (latitude == null || longitude == null) {
     const responseData = new ApiResponse(
       200,
       { banks: exactBanks, isFallback: false, distanceWarning: null },
-      exactBanks.length > 0
-        ? "Blood banks fetched successfully"
-        : "Unable to locate the entered pincode"
+      exactBanks.length > 0 ? "Blood banks fetched successfully" : "Unable to locate the entered location"
     );
-
-    timings.total = Date.now() - overallStart;
-    console.log(`[${requestId}] TIMINGS:`, timings);
     return res.status(200).json(responseData);
   }
 
-  const { latitude, longitude } = coords;
   const exactIds = exactBanks.map((b) => b._id);
 
-  // 4. GeoNear query
+  // 4. GeoNear query using precise coordinates (whether from GPS or geocoded pincode)
   const geoStart = Date.now();
   const nearestBanks = await BankProfile.aggregate([
     {
@@ -137,7 +126,7 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
         near: { type: "Point", coordinates: [longitude, latitude] },
         distanceField: "distanceMeters",
         spherical: true,
-        query: { _id: { $nin: exactIds } },
+        query: { _id: { $nin: exactIds }, isApproved: true },
       },
     },
     { $limit: RESULT_LIMIT - exactBanks.length },
@@ -152,16 +141,15 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
 
   const combinedBanks = [...exactBanks, ...nearestBanks];
 
-  // Distance warning — only relevant when we had to fall back to nearby banks
   const farthestNearbyDistance = nearestBanks.length > 0
     ? Math.max(...nearestBanks.map((b) => b.distance))
     : 0;
 
   let distanceWarning = null;
-  if (exactBanks.length === 0 && farthestNearbyDistance > CRITICAL_THRESHOLD_KM) {
+  if (combinedBanks.length === 0 && farthestNearbyDistance > CRITICAL_THRESHOLD_KM) {
     distanceWarning = {
       level: "critical",
-      message: `No blood banks found near this pincode. Nearest option is ${farthestNearbyDistance} km away — consider contacting a nearby district hospital or blood helpline for urgent needs.`,
+      message: `No blood banks found nearby. Nearest option is ${farthestNearbyDistance} km away.`,
     };
   }
 
@@ -171,23 +159,14 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
       banks: combinedBanks,
       isFallback: exactBanks.length === 0,
       distanceWarning,
-      exactCount: exactBanks.length,
-      nearestCount: nearestBanks.length,
     },
-    exactBanks.length > 0
-      ? "Blood banks fetched successfully"
-      : "Showing nearby blood banks"
+    "Blood banks fetched successfully"
   );
 
   timings.total = Date.now() - overallStart;
   console.log(`[${requestId}] TIMINGS:`, timings);
 
-  res.status(200).json(responseData);
-
-  // 5. Cache mein daalo — response ke baad, non-blocking
-  redis.set(cacheKey, responseData, { ex: CACHE_TTL_SECONDS }).catch((err) =>
-    console.log(`[${requestId}] Redis SET failed (non-fatal):`, err.message)
-  );
+  return res.status(200).json(responseData);
 });
 
 export { fetchBloodBanksByPinCode };
