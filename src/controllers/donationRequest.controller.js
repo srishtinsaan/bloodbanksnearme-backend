@@ -123,8 +123,9 @@ const applyRouting = (request, { banks }) => {
 
   for (const bankProfile of banks) {
     request.assignments.push({
-      bank: bankProfile.userId, // User._id — keeps auth matching (req.user._id) unchanged
-      bankName: bankProfile.bloodBankName,
+      bank: bankProfile.userId,
+      // Add fallbacks to check all possible name fields on the BankProfile
+      bankName: bankProfile.bloodBankName || bankProfile.bankName || bankProfile.name || "Blood Bank",
       status: "assigned",
       expiresAt,
     });
