@@ -5,6 +5,7 @@ import { BloodRequest } from "../models/bloodRequest.model.js";
 import { BankProfile } from "../models/bankProfile.model.js"; // adjust path/casing if needed
 import { getCoordinatesFromPincode } from "../utils/geocode.js";
 import { sweepStaleTerminalRequests, NOT_DELETED } from "../utils/staleRequestCleanup.js";
+import { sendNotification } from "../utils/notify.js";
 
 
 // ────────────────────────────────────────────────────────────────────────
@@ -313,10 +314,33 @@ export const createBloodRequest = asyncHandler(async (req, res) => {
         unitsAssigned,
         status: "assigned",
       });
+
+      // NOTE: type "BLOOD_REQUEST_ASSIGNED" assumed by parity with
+      // donationRequest.controller.js's "DONATION_REQUEST_ASSIGNED" —
+      // verify this exists in notification.model.js's enum before relying on it.
+      await sendNotification({
+        recipient: profile.userId,
+        type: "BLOOD_REQUEST_ASSIGNED",
+        title: "New blood request",
+        message: `A ${bloodType} blood request (${unitsAssigned} unit${unitsAssigned > 1 ? "s" : ""}) has been routed to your bank.`,
+        relatedRequest: request._id,
+        relatedRequestModel: "BloodRequest",
+      });
     }
     request.status = "assigned";
+  } else {
+    // No bank(s) currently cover it — request stays "pending", visible to
+    // admin for monitoring. Let the requester know nothing was found yet,
+    // same as donationRequest.controller.js does for its "no bank" case.
+    await sendNotification({
+      recipient: request.userId,
+      type: "BLOOD_REQUEST_PENDING", // NOTE: assumed enum value — verify against notification.model.js
+      title: "No blood bank available yet",
+      message: `We couldn't find a blood bank with enough ${bloodType} stock nearby right now. Your request is pending and visible to admins.`,
+      relatedRequest: request._id,
+      relatedRequestModel: "BloodRequest",
+    });
   }
-  // else: request stays "pending" — no bank(s) currently cover it, visible to admin for monitoring
 
   await request.save();
 
@@ -442,6 +466,21 @@ export const acceptBloodRequest = asyncHandler(async (req, res) => {
 
   await request.save();
 
+  // Notify the requester every time ANY bank in the split accepts its
+  // portion — not just when the whole request becomes fully accepted —
+  // since with splitting a recipient may otherwise wait a long time to
+  // hear anything if only the "fully accepted" moment triggered a notice.
+  await sendNotification({
+    recipient: request.userId,
+    type: "BLOOD_REQUEST_ACCEPTED", // NOTE: assumed enum value — verify against notification.model.js
+    title: "Blood request accepted",
+    message: allAccepted
+      ? `${assignment.bankName} accepted your request. All required units are now covered.`
+      : `${assignment.bankName} accepted ${assignment.unitsAssigned} unit${assignment.unitsAssigned > 1 ? "s" : ""} of your request. Other banks are still confirming the rest.`,
+    relatedRequest: request._id,
+    relatedRequestModel: "BloodRequest",
+  });
+
   return res.json(new ApiResponse(200, request, "Request accepted"));
 });
 
@@ -492,6 +531,17 @@ export const rejectBloodRequest = asyncHandler(async (req, res) => {
         unitsAssigned,
         status: "assigned",
       });
+
+      // Same "newly assigned" notice as createBloodRequest sends — this
+      // bank is being routed to for the first time on this request.
+      await sendNotification({
+        recipient: profile.userId,
+        type: "BLOOD_REQUEST_ASSIGNED",
+        title: "New blood request",
+        message: `A ${request.bloodType} blood request (${unitsAssigned} unit${unitsAssigned > 1 ? "s" : ""}) has been routed to your bank.`,
+        relatedRequest: request._id,
+        relatedRequestModel: "BloodRequest",
+      });
     }
     request.status = "assigned";
   } else {
@@ -503,7 +553,21 @@ export const rejectBloodRequest = asyncHandler(async (req, res) => {
     const stillLive = request.assignments.some((a) =>
       ["assigned", "accepted", "fulfilled"].includes(a.status)
     );
-    if (!stillLive) request.status = "rejected";
+    if (!stillLive) {
+      request.status = "rejected";
+
+      // Mirrors donationRequest.controller.js's applyRouting "banks.length
+      // === 0" case — only fires when truly nothing is covering the
+      // request anymore, not on every individual rejection within a split.
+      await sendNotification({
+        recipient: request.userId,
+        type: "BLOOD_REQUEST_REJECTED", // NOTE: assumed enum value — verify against notification.model.js
+        title: "No blood bank available",
+        message: "We couldn't find another blood bank for your request right now.",
+        relatedRequest: request._id,
+        relatedRequestModel: "BloodRequest",
+      });
+    }
   }
 
   await request.save();
@@ -592,6 +656,21 @@ export const fulfillBloodRequest = asyncHandler(async (req, res) => {
   }
 
   await request.save();
+
+  // Notify the requester per-bank-fulfillment, same reasoning as
+  // acceptBloodRequest — with splitting, each bank's fulfillment is its
+  // own event worth reporting, not just the final "fully fulfilled" one.
+  await sendNotification({
+    recipient: request.userId,
+    type: "BLOOD_REQUEST_FULFILLED", // NOTE: assumed enum value — verify against notification.model.js
+    title: request.status === "fulfilled" ? "Blood request fulfilled" : "Partial fulfillment",
+    message:
+      request.status === "fulfilled"
+        ? `${assignment.bankName} fulfilled ${assignment.unitsAssigned} unit${assignment.unitsAssigned > 1 ? "s" : ""}. Your request is now fully covered.`
+        : `${assignment.bankName} fulfilled ${assignment.unitsAssigned} unit${assignment.unitsAssigned > 1 ? "s" : ""}. Waiting on the remaining portion from another bank.`,
+    relatedRequest: request._id,
+    relatedRequestModel: "BloodRequest",
+  });
 
   return res.json(new ApiResponse(200, request, "Request fulfilled"));
 });

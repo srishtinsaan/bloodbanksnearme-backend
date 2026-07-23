@@ -42,6 +42,14 @@ const CACHE_TTL_SECONDS = 60; // short TTL — inventory badal sakti hai, isliye
 
 const CRITICAL_THRESHOLD_KM = 150; // isse zyada -> critical warning + alternate suggestion
 
+// Excludes manually-created test banks (licenseNumber like "TESTLIC001") from
+// ever appearing in real public search results. Case-insensitive so
+// "test..."/"Test..."/"TEST..." are all caught. A missing/undefined
+// licenseNumber does NOT match this regex (Mongo regex only matches string
+// values), so banks without a license number on file are unaffected —
+// only ones explicitly starting with "TEST" get filtered out.
+const EXCLUDE_TEST_BANKS = { licenseNumber: { $not: /^TEST/i } };
+
 // Updated Controller supporting both GPS Coordinates and Pincode search
 const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
   // Accept both lat/lng and pincode from the request body (or query)
@@ -83,7 +91,7 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
     // 2. Exact match query by pincode
     const exactStart = Date.now();
     exactBanks = await BankProfile.find(
-      { pincode: pincode.toString() },
+      { pincode: pincode.toString(), ...EXCLUDE_TEST_BANKS },
       PROJECTION
     ).lean();
     timings.exactMatchQuery = Date.now() - exactStart;
@@ -126,7 +134,7 @@ const fetchBloodBanksByPinCode = asyncHandler(async (req, res) => {
         near: { type: "Point", coordinates: [longitude, latitude] },
         distanceField: "distanceMeters",
         spherical: true,
-        query: { _id: { $nin: exactIds }, isApproved: true },
+        query: { _id: { $nin: exactIds }, isApproved: true, ...EXCLUDE_TEST_BANKS },
       },
     },
     { $limit: RESULT_LIMIT - exactBanks.length },
