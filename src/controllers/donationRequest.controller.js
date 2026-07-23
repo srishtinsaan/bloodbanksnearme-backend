@@ -5,6 +5,7 @@ import { DonationRequest } from "../models/donationRequest.model.js";
 import { BankProfile } from "../models/bankProfile.model.js"; // adjust path/casing if needed
 import { getCoordinatesFromPincode } from "../utils/geocode.js";
 import { sweepStaleTerminalRequests, NOT_DELETED } from "../utils/staleRequestCleanup.js";
+import { sendNotification } from "../utils/notify.js";
 
 // Configurable per-group minimum stock threshold — banks below this for the
 // donor's exact blood group are considered "in need" and prioritized.
@@ -118,19 +119,40 @@ const findBanksForDonation = async ({
 // Pushes assignment entries onto a request for the given bank profiles and
 // sets request.status accordingly. Shared by creation and re-routing after
 // a rejection, so both paths behave identically.
-const applyRouting = (request, { banks }) => {
+// Change signature: const applyRouting = (request, { banks }) => {
+// to:
+const applyRouting = async (request, { banks }) => {
   const expiresAt = new Date(Date.now() + ASSIGNMENT_RESPONSE_WINDOW_MS);
 
   for (const bankProfile of banks) {
     request.assignments.push({
       bank: bankProfile.userId,
-      // Add fallbacks to check all possible name fields on the BankProfile
       bankName: bankProfile.bloodBankName || bankProfile.bankName || bankProfile.name || "Blood Bank",
       status: "assigned",
       expiresAt,
     });
+
+    await sendNotification({
+      recipient: bankProfile.userId,
+      type: "DONATION_REQUEST_ASSIGNED",
+      title: "New donation request",
+      message: `A ${request.bloodGroup} donation request has been routed to your bank.`,
+      relatedRequest: request._id,
+      relatedRequestModel: "DonationRequest",
+    });
   }
   request.status = banks.length > 0 ? "assigned" : "rejected";
+
+  if (banks.length === 0) {
+    await sendNotification({
+      recipient: request.userId,
+      type: "DONATION_REQUEST_REJECTED",
+      title: "No blood bank available",
+      message: "We couldn't find a blood bank for your donation request right now.",
+      relatedRequest: request._id,
+      relatedRequestModel: "DonationRequest",
+    });
+  }
 };
 
 // Lazy expiry check — call this before reading "is anything still pending"
@@ -181,7 +203,7 @@ const tryWidenIfNothingActive = async (request) => {
     excludeBankIds,
   });
 
-  applyRouting(request, routing);
+  await applyRouting(request, routing);
 };
 
 // Lazy safety net — no cron, checked opportunistically whenever a request
@@ -196,33 +218,31 @@ const tryWidenIfNothingActive = async (request) => {
 // broadcast round is pushed in $geoNear (distance-sorted) order.
 //
 // Returns true if it resolved something (caller should save()).
-const tryAutoResolveToNearest = (request) => {
-  if (request.status !== "assigned") return false;
-
-  const now = Date.now();
-  const timeSinceCreated = now - request.createdAt.getTime();
-  const availabilityImminent =
-    request.availability && request.availability.getTime() - now <= AVAILABILITY_BUFFER_MS;
-
-  if (timeSinceCreated < AUTO_RESOLVE_TIMEOUT_MS && !availabilityImminent) {
-    return false; // not stale enough yet, let normal routing keep trying
-  }
-
-  const pending = request.assignments.filter((a) => a.status === "assigned");
-  if (pending.length === 0) return false; // nothing currently pending to fall back to
-
-  const [chosen, ...rest] = pending;
-
-  chosen.status = "accepted";
-  chosen.acceptedAt = new Date(now);
-  chosen.autoAssigned = true;
-
-  for (const other of rest) {
-    other.status = "superseded";
-    other.supersededAt = new Date(now);
-  }
+// Change signature: const tryAutoResolveToNearest = (request) => {
+// to:
+const tryAutoResolveToNearest = async (request) => {
+  // ... existing body unchanged, until the end ...
 
   request.status = "accepted";
+
+  await sendNotification({
+    recipient: chosen.bank,
+    type: "DONATION_REQUEST_ASSIGNED",
+    title: "Donation auto-assigned to you",
+    message: `A ${request.bloodGroup} donation request has been auto-assigned to your bank after no response window.`,
+    relatedRequest: request._id,
+    relatedRequestModel: "DonationRequest",
+  });
+
+  await sendNotification({
+    recipient: request.userId,
+    type: "DONATION_REQUEST_ACCEPTED",
+    title: "Donation request accepted",
+    message: `Your donation request was auto-assigned to ${chosen.bankName} after the response window elapsed.`,
+    relatedRequest: request._id,
+    relatedRequestModel: "DonationRequest",
+  });
+
   return true;
 };
 
@@ -277,7 +297,7 @@ export const createDonationRequest = asyncHandler(async (req, res) => {
   });
 
   const routing = await findBanksForDonation({ latitude, longitude, bloodGroup });
-  applyRouting(request, routing);
+  await applyRouting(request, routing);
   // else: stays "pending" if routing found nothing — no approved bank exists at all
   if (routing.banks.length === 0) request.status = "pending";
 
@@ -344,7 +364,7 @@ export const getDonationRequestDetails = asyncHandler(async (req, res) => {
 
   // Check the 48hr/availability safety net first — this can fire even if
   // nothing has expired yet (e.g. availability date is now imminent).
-  const autoResolved = tryAutoResolveToNearest(request);
+  const autoResolved = await tryAutoResolveToNearest(request);
 
   if (!autoResolved) {
     const expired = expireStaleAssignments(request);
@@ -456,6 +476,19 @@ export const acceptDonationRequest = asyncHandler(async (req, res) => {
 
   const updatedRequest = await DonationRequest.findById(request._id);
 
+  const acceptedAssignment = updatedRequest.assignments.find(
+    (a) => a.bank.toString() === req.user._id.toString()
+  );
+
+  await sendNotification({
+    recipient: updatedRequest.userId,
+    type: "DONATION_REQUEST_ACCEPTED",
+    title: "Donation request accepted",
+    message: `${acceptedAssignment?.bankName || "A blood bank"} accepted your donation request.`,
+    relatedRequest: updatedRequest._id,
+    relatedRequestModel: "DonationRequest",
+  });
+
   return res.json(new ApiResponse(200, updatedRequest, "Donation request accepted"));
 });
 
@@ -490,7 +523,7 @@ export const rejectDonationRequest = asyncHandler(async (req, res) => {
   // Check the 48hr/availability safety net first — if it's time to stop
   // widening and just settle for the nearest still-pending bank, do that
   // instead of kicking off another broadcast round.
-  const autoResolved = tryAutoResolveToNearest(request);
+  const autoResolved = await tryAutoResolveToNearest(request);
 
   if (!autoResolved) {
     await tryWidenIfNothingActive(request);
@@ -533,5 +566,15 @@ export const fulfillDonationRequest = asyncHandler(async (req, res) => {
 
   await request.save();
 
+  await sendNotification({
+    recipient: request.userId,
+    type: "DONATION_REQUEST_FULFILLED",
+    title: "Donation completed",
+    message: `Your donation at ${assignment.bankName} has been marked as fulfilled. Thank you!`,
+    relatedRequest: request._id,
+    relatedRequestModel: "DonationRequest",
+  });
+
   return res.json(new ApiResponse(200, request, "Donation request fulfilled"));
 });
+

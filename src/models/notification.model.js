@@ -20,6 +20,7 @@ const notificationSchema = new mongoose.Schema(
         "DONATION_REQUEST_ASSIGNED",
         "DONATION_REQUEST_ACCEPTED",
         "DONATION_REQUEST_FULFILLED",
+        "DONATION_REQUEST_REJECTED",
         "DONATION_CANCELLATION_REQUESTED",
       ],
     },

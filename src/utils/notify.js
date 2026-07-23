@@ -41,6 +41,9 @@ export const sendNotification = async ({
   // succeed even if the realtime server is temporarily unreachable).
   if (REALTIME_SERVER_URL) {
     try {
+      // `recipient` MUST be top-level here, not nested in `payload` — the
+      // realtime server's /internal/emit reads req.body.recipient directly
+      // to pick the target room (`user_${recipient}`) and 400s without it.
       await fetch(`${REALTIME_SERVER_URL}/internal/emit`, {
         method: "POST",
         headers: {
@@ -49,8 +52,8 @@ export const sendNotification = async ({
         },
         body: JSON.stringify({
           event: "notification:new",
+          recipient: recipient.toString(),
           payload: {
-            recipient: recipient.toString(),
             notificationId: notification._id,
             type,
             title,

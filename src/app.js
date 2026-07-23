@@ -5,6 +5,8 @@ import bloodbankRoutes from "./routes/bloodbank.routes.js";
 import { ApiError } from "./utils/ApiError.js"
 import cookieParser from "cookie-parser"
 import adminRouter from "./routes/admin.routes.js";
+import notificationRoutes from "./routes/notification.routes.js";
+
 
 import "./jobs/cleanupRequests.js";
 
@@ -66,7 +68,7 @@ app.get("/", (req, res) => {
 app.use("/api/v1", userRouter);
 app.use("/api/v1/bloodbanks", bloodbankRoutes);
 app.use("/api/v1/admin", adminRouter);
-
+app.use("/api/v1/notifications", notificationRoutes);
 
 
 app.get("/api/debug", (req, res) => {
